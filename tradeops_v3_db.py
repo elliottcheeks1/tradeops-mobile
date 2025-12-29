@@ -2,11 +2,13 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 import uuid
+import os
 
-# We stick with V4 to maintain your schema, but we will force-seed data
-DB_NAME = "tradeops_v5_test.db"
+# NEW FILENAME: Forces a fresh start
+DB_NAME = "tradeops_v7_final.db"
 
 def init_db():
+    new_db = not os.path.exists(DB_NAME)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
@@ -64,16 +66,20 @@ def init_db():
     )''')
     
     conn.commit()
-    seed_data(conn) # Force check for data
+    
+    # ALWAYS RUN SEED CHECK
+    seed_data(conn)
     conn.close()
 
 def seed_data(conn):
     c = conn.cursor()
+    print("--- CHECKING FOR SEED DATA ---")
     
     # --- SEED LABOR ---
     c.execute("SELECT count(*) FROM labor_rates")
-    if c.fetchone()[0] == 0:
-        print("Seeding Labor Rates...")
+    count = c.fetchone()[0]
+    if count == 0:
+        print("SEEDING LABOR...")
         labor = [
             ("Apprentice", 20.0, 65.0),
             ("Journeyman Tech", 35.0, 95.0),
@@ -84,35 +90,33 @@ def seed_data(conn):
 
     # --- SEED PARTS ---
     c.execute("SELECT count(*) FROM parts_catalog")
-    if c.fetchone()[0] == 0:
-        print("Seeding Parts Catalog...")
+    count = c.fetchone()[0]
+    if count == 0:
+        print("SEEDING PARTS...")
         parts = [
             ("P101", "Capacitor 45/5 MFD", 12.50, 85.00),
             ("P102", "Contactor 2-Pole 30A", 18.00, 125.00),
             ("P103", "R410a Refrigerant (lb)", 15.00, 95.00),
-            ("P104", "Hard Start Kit (Compressor)", 35.00, 245.00),
-            ("P105", "Universal Control Board", 110.00, 450.00),
+            ("P104", "Hard Start Kit", 35.00, 245.00),
             ("P201", "PVC Pipe 2 inch (10ft)", 8.00, 25.00),
-            ("P202", "Wax Ring Kit", 4.00, 18.00),
-            ("P203", "Garbage Disposal 1/2 HP", 85.00, 275.00),
-            ("P301", "Breaker 20 Amp", 9.00, 35.00),
-            ("P302", "GFCI Outlet", 15.00, 65.00)
+            ("P301", "Breaker 20 Amp", 9.00, 35.00)
         ]
         c.executemany("INSERT INTO parts_catalog VALUES (?,?,?,?)", parts)
 
     # --- SEED CUSTOMERS ---
     c.execute("SELECT count(*) FROM customers")
-    if c.fetchone()[0] == 0:
-        print("Seeding Customers...")
+    count = c.fetchone()[0]
+    if count == 0:
+        print("SEEDING CUSTOMERS...")
         customers = [
-            ("C001", "Walmart Supercenter #482", "8800 Retail Pkwy", "Dallas", "TX", "75001", "555-0101", "mgr@walmart.com"),
-            ("C002", "Mrs. Robinson", "123 Graduate Ln", "Austin", "TX", "78701", "555-0999", "mrs.robinson@gmail.com"),
-            ("C003", "Burger King #42", "450 Whopper Way", "Houston", "TX", "77002", "555-0200", "bk42@franchise.com"),
-            ("C004", "City Hall Annex", "1 Main St", "Texas City", "TX", "77590", "555-1000", "facilities@city.gov")
+            ("C001", "Walmart Supercenter", "8800 Retail Pkwy", "Dallas", "TX", "75001", "555-0101", "mgr@walmart.com"),
+            ("C002", "Burger King", "450 Whopper Way", "Houston", "TX", "77002", "555-0200", "bk@loves.com"),
+            ("C003", "Residential - Smith", "12 Maple Dr", "Austin", "TX", "78701", "555-9999", "smith@gmail.com")
         ]
         c.executemany("INSERT INTO customers VALUES (?,?,?,?,?,?,?,?)", customers)
         
     conn.commit()
+    print("--- SEEDING COMPLETE ---")
 
 # --- DATA ACCESS ---
 
@@ -145,7 +149,6 @@ def save_new_quote(cust_id, job_type, estimator, items):
     margin = ((total_price - total_cost) / total_price * 100) if total_price > 0 else 0
     now = datetime.now().strftime("%Y-%m-%d")
     
-    # New quotes default to follow up TODAY so they show in the list
     conn.execute("INSERT INTO quotes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", 
                  (qid, cust_id, job_type, estimator, "Open", now, now, now, "Needs Call", total_price, total_cost, margin))
     
@@ -218,4 +221,3 @@ def get_quote_details(quote_id):
     items = pd.read_sql(f"SELECT * FROM quote_items WHERE quote_id='{quote_id}'", conn)
     conn.close()
     return header, items
-
