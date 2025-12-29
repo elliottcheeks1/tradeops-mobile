@@ -272,19 +272,23 @@ def DashboardView():
     open_q = len(df_q[df_q['status']=='Draft'])
     
     # Generate Charts
-    # 1. Revenue History (Mock Data for Demo, real data would query created_at)
+    # 1. Revenue History
     dates = pd.date_range(end=datetime.today(), periods=6, freq='M').strftime("%b")
     rev_data = [random.randint(5000, 15000) for _ in range(6)]
     fig_rev = px.area(x=dates, y=rev_data, title="Revenue Trend (6 Mo)", template="plotly_white")
     fig_rev.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=300, yaxis_title=None, xaxis_title=None)
     fig_rev.update_traces(line_color="#1E40AF", fillcolor="rgba(30, 64, 175, 0.1)")
 
-    # 2. Job Status Distribution
+    # 2. Job Status Distribution (CORRECTED)
     status_counts = df_j['status'].value_counts().reset_index()
     status_counts.columns = ['status', 'count']
-    fig_pie = px.donut(status_counts, values='count', names='status', title="Job Status", hole=0.6, template="plotly_white", color_discrete_sequence=px.colors.sequential.Blues_r)
-    fig_pie.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=300, showlegend=False)
-    fig_pie.update_traces(textinfo='label+value')
+    if status_counts.empty:
+         fig_pie = go.Figure().add_annotation(text="No Jobs Data", showarrow=False)
+    else:
+        # Changed px.donut to px.pie
+        fig_pie = px.pie(status_counts, values='count', names='status', title="Job Status", hole=0.6, template="plotly_white", color_discrete_sequence=px.colors.sequential.Blues_r)
+        fig_pie.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=300, showlegend=False)
+        fig_pie.update_traces(textinfo='label+value')
 
     return html.Div([
         html.H2("Executive Dashboard", className="fw-bold mb-4"),
