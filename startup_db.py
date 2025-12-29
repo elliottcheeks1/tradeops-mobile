@@ -1,127 +1,148 @@
-import os
-import sqlalchemy
-from sqlalchemy import create_engine, text
+import sqlite3
 import pandas as pd
-import uuid
 from datetime import datetime, timedelta
+import uuid
 
-# --- CONFIGURATION ---
-# Check if we are in the cloud (Render) or local
-db_url = os.environ.get("DATABASE_URL")
-
-# Fix for Render/Neon compatibility (postgres:// -> postgresql://)
-if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
-
-# If no cloud DB found, fallback to local file
-if not db_url:
-    db_url = "sqlite:///tradeops_v2.db"
-
-ENGINE = create_engine(db_url)
-
-def run_query(query, params=None):
-    """Executes SQL safely on both SQLite and Postgres"""
-    with ENGINE.connect() as conn:
-        if params:
-            # SQLAlchemy text() requires parameters to be passed as a dictionary
-            result = conn.execute(text(query), params)
-        else:
-            result = conn.execute(text(query))
-        
-        # If SELECT, return DataFrame
-        if query.strip().upper().startswith("SELECT"):
-            return pd.DataFrame(result.fetchall(), columns=result.keys())
-        
-        # If INSERT/UPDATE, commit logic is handled by the connection context usually, 
-        # but explicit commit ensures data is saved.
-        conn.commit()
+DB_NAME = "tradeops_v2.db"
 
 def init_db():
-    # Create Tables (Compatible with both DB types)
-    run_query('''CREATE TABLE IF NOT EXISTS labor_rates (
-        role VARCHAR(50) PRIMARY KEY,
-        base_cost FLOAT,
-        bill_rate FLOAT
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    
+    # 1. Customers Table
+    c.execute('''CREATE TABLE IF NOT EXISTS customers (
+        customer_id TEXT PRIMARY KEY,
+        name TEXT,
+        address TEXT,
+        phone TEXT,
+        email TEXT
     )''')
     
-    run_query('''CREATE TABLE IF NOT EXISTS quotes (
-        quote_id VARCHAR(50),
+    # 2. Parts Catalog (Standard items)
+    c.execute('''CREATE TABLE IF NOT EXISTS parts_catalog (
+        part_id TEXT PRIMARY KEY,
+        name TEXT,
+        description TEXT,
+        cost REAL, -- Hidden from tech
+        retail_price REAL
+    )''')
+    
+    # 3. Quotes Header
+    c.execute('''CREATE TABLE IF NOT EXISTS quotes (
+        quote_id TEXT,
         version INTEGER,
-        client_name VARCHAR(100),
-        job_type VARCHAR(50),
-        estimator VARCHAR(100),
-        status VARCHAR(20),
-        created_at VARCHAR(20),
-        last_contact_at VARCHAR(20),
-        next_followup_date VARCHAR(20),
-        followup_status VARCHAR(50),
-        total_price FLOAT,
-        total_cost FLOAT,
-        margin_percent FLOAT,
+        customer_id TEXT, -- Linked to customers
+        job_type TEXT,
+        estimator TEXT,
+        status TEXT,
+        created_at TEXT,
+        last_contact_at TEXT,
+        next_followup_date TEXT,
+        followup_status TEXT,
+        total_price REAL,
+        total_cost REAL,
+        margin_percent REAL,
         PRIMARY KEY (quote_id, version)
     )''')
     
-    run_query('''CREATE TABLE IF NOT EXISTS quote_items (
-        id SERIAL, 
-        quote_id VARCHAR(50),
+    # 4. Quote Items
+    c.execute('''CREATE TABLE IF NOT EXISTS quote_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        quote_id TEXT,
         version INTEGER,
-        item_name VARCHAR(100),
-        item_type VARCHAR(50),
-        unit_cost FLOAT,
-        unit_price FLOAT,
-        quantity FLOAT
+        item_name TEXT,
+        item_type TEXT, 
+        unit_cost REAL,
+        unit_price REAL,
+        quantity REAL
     )''')
 
-    # Seed Data
-    try:
-        df = run_query("SELECT count(*) as cnt FROM labor_rates")
-        # Handle different count return types between DBs
-        count = df.iloc[0]['cnt']
-        if count == 0:
-            rates = [
-                {"role": "Apprentice", "base": 20.0, "bill": 65.0},
-                {"role": "Journeyman", "base": 35.0, "bill": 95.0},
-                {"role": "Master Electrician", "base": 55.0, "bill": 150.0}
-            ]
-            for r in rates:
-                run_query("INSERT INTO labor_rates (role, base_cost, bill_rate) VALUES (:role, :base, :bill)",
-                          {"role": r['role'], "base": r['base'], "bill": r['bill']})
-            print("Default Labor Rates Seeded.")
-    except Exception as e:
-        print(f"DB Init Warning: {e}")
+    # --- SEED DATA ---
+    
+    # Seed Customers
+    c.execute("SELECT count(*) FROM customers")
+    if c.fetchone()[0] == 0:
+        customers = [
+            ("C1", "Walmart Supercenter", "8800 Retail Pkwy", "555-0101", "mgr@walmart.com"),
+            ("C2", "Mrs. Robinson", "123 Graduate Ln", "555-0999", "mrs.robinson@gmail.com"),
+            ("C3", "Burger King #42", "450 Whopper Way", "555-0200", "bk42@franchise.com")
+        ]
+        c.executemany("INSERT INTO customers VALUES (?,?,?,?,?)", customers)
 
-# --- DATA FUNCTIONS ---
-def get_labor_rates():
-    return run_query("SELECT * FROM labor_rates")
+    # Seed Parts Catalog
+    c.execute("SELECT count(*) FROM parts_catalog")
+    if c.fetchone()[0] == 0:
+        parts = [
+            ("P001", "Capacitor 45/5 MFD", "Dual run capacitor", 12.50, 85.00),
+            ("P002", "Contactor 2 Pole 30A", "Standard AC contactor", 18.00, 125.00),
+            ("P003", "R410a Refrigerant (lb)", "Price per pound", 15.00, 85.00),
+            ("P004", "Hard Start Kit", "Compressor saver", 35.00, 250.00),
+            ("P005", "Limit Switch", "Generic furnace limit", 22.00, 145.00),
+        ]
+        c.executemany("INSERT INTO parts_catalog VALUES (?,?,?,?,?)", parts)
 
-def save_quote(client, job_type, estimator, items):
+    conn.commit()
+    conn.close()
+
+# --- DATA ACCESS ---
+
+def get_customers():
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql("SELECT * FROM customers", conn)
+    conn.close()
+    return df
+
+def add_customer(name, address, phone, email):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c_id = str(uuid.uuid4())[:8]
+    c.execute("INSERT INTO customers VALUES (?,?,?,?,?)", (c_id, name, address, phone, email))
+    conn.commit()
+    conn.close()
+    return c_id
+
+def get_parts():
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql("SELECT * FROM parts_catalog", conn)
+    conn.close()
+    return df
+
+def save_quote_v2(customer_id, job_type, estimator, items):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
     q_id = str(uuid.uuid4())[:8]
+    
+    # Calculate hidden totals
     total_cost = sum([i['cost'] * i['qty'] for i in items])
     total_price = sum([i['price'] * i['qty'] for i in items])
     margin = ((total_price - total_cost) / total_price * 100) if total_price > 0 else 0
+    
     now = datetime.now().strftime("%Y-%m-%d")
     next_fup = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
-
-    run_query("""
-        INSERT INTO quotes (quote_id, version, client_name, job_type, estimator, status, created_at, last_contact_at, next_followup_date, followup_status, total_price, total_cost, margin_percent)
-        VALUES (:id, 1, :cl, :jt, :est, 'Open', :now, :now, :nxt, 'Needs Call', :tp, :tc, :mp)
-    """, {"id": q_id, "cl": client, "jt": job_type, "est": estimator, "now": now, "nxt": next_fup, "tp": total_price, "tc": total_cost, "mp": margin})
+    
+    c.execute('''INSERT INTO quotes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+              (q_id, 1, customer_id, job_type, estimator, "Open", now, now, next_fup, "Needs Call", total_price, total_cost, margin))
     
     for i in items:
-        run_query("""
-            INSERT INTO quote_items (quote_id, version, item_name, item_type, unit_cost, unit_price, quantity)
-            VALUES (:id, 1, :name, :type, :cost, :price, :qty)
-        """, {"id": q_id, "name": i['name'], "type": i['type'], "cost": i['cost'], "price": i['price'], "qty": i['qty']})
+        c.execute("INSERT INTO quote_items (quote_id, version, item_name, item_type, unit_cost, unit_price, quantity) VALUES (?,?,?,?,?,?,?)",
+                  (q_id, 1, i['name'], i['type'], i['cost'], i['price'], i['qty']))
+        
+    conn.commit()
+    conn.close()
     return q_id
 
-def get_followup_queue():
-    today = datetime.now().strftime("%Y-%m-%d")
-    return run_query(f"SELECT * FROM quotes WHERE status = 'Open' AND next_followup_date <= '{today}' ORDER BY next_followup_date ASC")
+def get_office_dashboard_data():
+    conn = sqlite3.connect(DB_NAME)
+    # Join Customers to get names
+    query = """
+    SELECT q.quote_id, c.name as client_name, q.total_price, q.total_cost, q.margin_percent, q.status, q.estimator
+    FROM quotes q
+    LEFT JOIN customers c ON q.customer_id = c.customer_id
+    """
+    df = pd.read_sql(query, conn)
+    conn.close()
+    return df
 
-def update_followup(quote_id, version, new_status, next_date_str):
-    now = datetime.now().strftime("%Y-%m-%d")
-    run_query("""
-        UPDATE quotes 
-        SET followup_status = :stat, next_followup_date = :nxt, last_contact_at = :now
-        WHERE quote_id = :qid AND version = :ver
-    """, {"stat": new_status, "nxt": next_date_str, "now": now, "qid": quote_id, "ver": version})
+if __name__ == "__main__":
+    init_db()
+    print("Database Updated with Parts & Customers.")
