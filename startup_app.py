@@ -202,9 +202,12 @@ app.layout = html.Div([
     [State("hist-filter-input", "value")]
 )
 def load_data(tab, n_filter, n_refresh, filter_name):
+    print("Refreshing Data...") # DEBUG PRINT
     c_opts = [{"label": r['name'], "value": r['customer_id']} for _, r in db.get_customers().iterrows()]
     p_opts = [{"label": f"{r['name']} (${r['retail_price']})", "value": f"{r['part_id']}|{r['name']}|{r['cost']}|{r['retail_price']}"} for _, r in db.get_parts().iterrows()]
     l_opts = [{"label": f"{r['role']} (${r['bill_rate']}/hr)", "value": f"{r['role']}|{r['base_cost']}|{r['bill_rate']}"} for _, r in db.get_labor().iterrows()]
+    
+    print(f"Loaded {len(p_opts)} parts.") # DEBUG PRINT
     
     # Filter History
     hist_data = db.get_tech_history(estimator_name=filter_name).to_dict('records')
