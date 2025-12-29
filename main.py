@@ -1,4 +1,3 @@
-# main.py
 """
 FastAPI entrypoint for TradeOps:
 - JSON API (health, quotes)
@@ -11,13 +10,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.wsgi import WSGIMiddleware
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Numeric, JSON, Text
-from sqlalchemy.orm import relationship
-from database import Base
-
+from sqlalchemy.orm import relationship, Session  # <--- FIXED: Added Session here
+from database import Base, SessionLocal, engine   # <--- Ensure these are imported from database.py
 
 # Local imports
-from database import SessionLocal, engine
 import models
 import crud
 import schemas
@@ -123,4 +119,3 @@ def delete_quote(quote_id: int, db: Session = Depends(get_db)):
 # -------------------------------------------------------------------
 # Dash will live at: https://tradeops.onrender.com/app
 app.mount("/app", WSGIMiddleware(dash_app.server))
-
