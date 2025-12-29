@@ -5,7 +5,7 @@ from sqlalchemy import (
     Column, String, Integer, Boolean, DateTime, ForeignKey, Text, Numeric, JSON
 )
 from sqlalchemy.orm import relationship
-from .database import Base
+from database import Base
 
 
 def _uuid():
@@ -168,3 +168,4 @@ class ActivityEvent(Base):
     payload = Column(JSON)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
