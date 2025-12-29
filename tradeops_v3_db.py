@@ -3,7 +3,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import uuid
 
-DB_NAME = "tradeops_v3.db"
+# Using V4 DB to keep your detailed addresses
+DB_NAME = "tradeops_v4.db"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -13,12 +14,15 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS customers (
         customer_id TEXT PRIMARY KEY,
         name TEXT,
-        address TEXT,
+        street TEXT,
+        city TEXT,
+        state TEXT,
+        zip TEXT,
         phone TEXT,
         email TEXT
     )''')
     
-    # 2. Catalogs (Parts & Labor)
+    # 2. Catalogs
     c.execute('''CREATE TABLE IF NOT EXISTS parts_catalog (
         part_id TEXT PRIMARY KEY,
         name TEXT,
@@ -32,14 +36,14 @@ def init_db():
         bill_rate REAL
     )''')
     
-    # 3. Quotes Header (Lifecycle & Versioning)
+    # 3. Quotes Header
     c.execute('''CREATE TABLE IF NOT EXISTS quotes (
         quote_id TEXT,
         version INTEGER,
         customer_id TEXT,
         job_type TEXT,
         estimator TEXT,
-        status TEXT, -- Open, Won, Lost
+        status TEXT, 
         created_at TEXT,
         last_contact_at TEXT,
         next_followup_date TEXT,
@@ -50,7 +54,7 @@ def init_db():
         PRIMARY KEY (quote_id, version)
     )''')
     
-    # 4. Quote Line Items
+    # 4. Quote Items
     c.execute('''CREATE TABLE IF NOT EXISTS quote_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         quote_id TEXT,
@@ -62,8 +66,7 @@ def init_db():
         quantity REAL
     )''')
 
-    # --- SEEDING ---
-    # Seed Labor (Gap B2)
+    # Seed Data
     c.execute("SELECT count(*) FROM labor_rates")
     if c.fetchone()[0] == 0:
         c.executemany("INSERT INTO labor_rates VALUES (?,?,?)", [
@@ -71,22 +74,10 @@ def init_db():
             ("Journeyman", 35.0, 95.0),
             ("Master Tech", 55.0, 150.0)
         ])
-
-    # Seed Parts
-    c.execute("SELECT count(*) FROM parts_catalog")
-    if c.fetchone()[0] == 0:
         c.executemany("INSERT INTO parts_catalog VALUES (?,?,?,?)", [
             ("P1", "Capacitor 45/5", 12.0, 85.0),
             ("P2", "Contactor 30A", 18.0, 125.0),
             ("P3", "R410a (lb)", 15.0, 85.0)
-        ])
-        
-    # Seed Customers
-    c.execute("SELECT count(*) FROM customers")
-    if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO customers VALUES (?,?,?,?,?)", [
-            ("C1", "Walmart", "8800 Retail Pkwy", "555-0101", "mgr@walmart.com"),
-            ("C2", "Mrs. Jones", "12 Oak St", "555-0999", "jones@gmail.com")
         ])
 
     conn.commit()
@@ -103,48 +94,86 @@ def get_parts():
 def get_labor():
     return pd.read_sql("SELECT * FROM labor_rates", sqlite3.connect(DB_NAME))
 
-def add_customer(name, addr, phone):
+def add_customer(name, street, city, state, zip_code, phone):
     conn = sqlite3.connect(DB_NAME)
     cid = str(uuid.uuid4())[:8]
-    conn.execute("INSERT INTO customers VALUES (?,?,?,?,?)", (cid, name, addr, phone, ""))
+    conn.execute("INSERT INTO customers VALUES (?,?,?,?,?,?,?,?)", 
+                 (cid, name, street, city, state, zip_code, phone, ""))
     conn.commit()
     conn.close()
     return cid
 
-def save_quote(cust_id, job_type, estimator, items):
+# --- QUOTE LOGIC ---
+
+def save_new_quote(cust_id, job_type, estimator, items):
     conn = sqlite3.connect(DB_NAME)
     qid = str(uuid.uuid4())[:8]
+    save_quote_version(conn, qid, 1, cust_id, job_type, estimator, items)
+    conn.close()
+    return qid
+
+def update_quote(quote_id, version, cust_id, job_type, estimator, items):
+    conn = sqlite3.connect(DB_NAME)
+    # Increment version for history tracking
+    new_version = int(version) + 1
+    save_quote_version(conn, quote_id, new_version, cust_id, job_type, estimator, items)
+    conn.close()
+    return quote_id
+
+def save_quote_version(conn, qid, ver, cust_id, job_type, estimator, items):
     total_cost = sum([i['cost'] * i['qty'] for i in items])
     total_price = sum([i['price'] * i['qty'] for i in items])
     margin = ((total_price - total_cost) / total_price * 100) if total_price > 0 else 0
     now = datetime.now().strftime("%Y-%m-%d")
-    next_fup = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d") # Default 3 day follow-up (Gap B1)
+    next_fup = now # Default to today
     
     conn.execute("INSERT INTO quotes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", 
-                 (qid, 1, cust_id, job_type, estimator, "Open", now, now, next_fup, "Needs Call", total_price, total_cost, margin))
+                 (qid, ver, cust_id, job_type, estimator, "Open", now, now, next_fup, "Needs Call", total_price, total_cost, margin))
     
     for i in items:
         conn.execute("INSERT INTO quote_items (quote_id, version, item_name, item_type, unit_cost, unit_price, quantity) VALUES (?,?,?,?,?,?,?)",
-                     (qid, 1, i['name'], i['type'], i['cost'], i['price'], i['qty']))
+                     (qid, ver, i['name'], i['type'], i['cost'], i['price'], i['qty']))
     conn.commit()
+
+# --- HISTORY & RETRIEVAL ---
+
+def get_tech_history(estimator_name=None):
+    """Gets all quotes. In a real app, filter by estimator_name"""
+    conn = sqlite3.connect(DB_NAME)
+    query = """
+    SELECT q.quote_id, q.version, c.name, q.total_price, q.status, q.created_at, q.estimator
+    FROM quotes q JOIN customers c ON q.customer_id = c.customer_id
+    ORDER BY q.created_at DESC, q.version DESC
+    """
+    return pd.read_sql(query, conn)
+
+def get_quote_details(quote_id, version):
+    conn = sqlite3.connect(DB_NAME)
+    # Get Header
+    header = pd.read_sql(f"SELECT * FROM quotes WHERE quote_id='{quote_id}' AND version={version}", conn).iloc[0]
+    # Get Items
+    items = pd.read_sql(f"SELECT * FROM quote_items WHERE quote_id='{quote_id}' AND version={version}", conn)
     conn.close()
-    return qid
+    return header, items
 
 def get_followup_queue():
     query = """
-    SELECT q.quote_id, c.name, q.total_price, q.next_followup_date, q.followup_status, q.estimator
+    SELECT q.quote_id, c.name, c.phone, q.total_price, q.next_followup_date, q.followup_status, q.estimator
     FROM quotes q JOIN customers c ON q.customer_id = c.customer_id
-    WHERE q.status = 'Open' ORDER BY q.next_followup_date ASC
+    WHERE q.status = 'Open' 
+    GROUP BY q.quote_id -- Only show latest version
+    ORDER BY q.next_followup_date ASC
     """
     return pd.read_sql(query, sqlite3.connect(DB_NAME))
 
-def get_analytics():
-    # Gap D: Close rates and time series
+def log_interaction(quote_id, new_status, next_date):
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql("SELECT * FROM quotes", conn)
+    now = datetime.now().strftime("%Y-%m-%d")
+    # Update all versions or just latest? Usually just latest, but simpler to update header logic
+    conn.execute("UPDATE quotes SET followup_status = ?, next_followup_date = ?, last_contact_at = ? WHERE quote_id = ?", 
+                 (new_status, next_date, now, quote_id))
+    conn.commit()
     conn.close()
-    return df
 
 if __name__ == "__main__":
     init_db()
-    print("V3 Database Initialized")
