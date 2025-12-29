@@ -10,6 +10,7 @@ db.init_db()
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.ZEPHYR, dbc.icons.BOOTSTRAP],
                 meta_tags=[{'name': 'viewport', 'content': 'width=device-width, initial-scale=1.0'}])
 app.title = "TradeOps V3"
+server = app.server
 
 # --- HELPERS ---
 def get_cust_opts(): return [{"label": r['name'], "value": r['customer_id']} for _, r in db.get_customers().iterrows()]
@@ -168,4 +169,3 @@ def refresh_data(tab):
 
 if __name__ == "__main__":
     app.run_server(debug=True, port=8050)
-
