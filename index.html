@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeOps Field</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: { primary: '#2563EB', secondary: '#475569', success: '#10B981', surface: '#F1F5F9' }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-surface text-slate-800 h-screen flex overflow-hidden">
+
+<div id="app" class="flex w-full h-full">
+
+    <aside class="w-64 bg-white border-r border-slate-200 hidden md:flex flex-col z-20 shadow-sm">
+        <div class="h-16 flex items-center px-6 border-b border-slate-100">
+            <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-white mr-3">
+                <i class="fa-solid fa-bolt"></i>
+            </div>
+            <span class="font-bold text-lg tracking-tight">TradeOps</span>
+        </div>
+        
+        <nav class="flex-1 p-4 space-y-1">
+            <a href="#" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50 transition">
+                <i class="fa-solid fa-chart-pie w-5 text-center"></i> Dashboard
+            </a>
+            <a href="#" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50 transition">
+                <i class="fa-solid fa-calendar-days w-5 text-center"></i> Schedule
+            </a>
+            <a href="#" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg bg-blue-50 text-primary transition">
+                <i class="fa-solid fa-file-invoice-dollar w-5 text-center"></i> Quotes
+            </a>
+            <a href="#" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50 transition">
+                <i class="fa-solid fa-users w-5 text-center"></i> Accounts
+            </a>
+        </nav>
+
+        <div class="p-4 border-t border-slate-100">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">EC</div>
+                <div>
+                    <p class="text-xs font-bold text-slate-700">Elliott C.</p>
+                    <p class="text-[10px] text-slate-400 uppercase">Admin</p>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col h-full relative">
+        
+        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm z-10">
+            <div>
+                <h1 class="text-xl font-bold text-slate-800">Quote Builder</h1>
+                <p class="text-xs text-slate-400">Drafting New Proposal</p>
+            </div>
+            <div class="flex gap-3">
+                <button class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900">Cancel</button>
+                <button @click="saveQuote" class="bg-primary hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-medium shadow-sm transition flex items-center gap-2">
+                    <i class="fa-solid fa-floppy-disk"></i> Save Quote
+                </button>
+            </div>
+        </header>
+
+        <div class="flex-1 overflow-auto p-8">
+            <div class="max-w-6xl mx-auto grid grid-cols-12 gap-8">
+                
+                <div class="col-span-12 lg:col-span-4 space-y-6">
+                    
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Customer</label>
+                        <div class="flex gap-2 mb-4">
+                            <select v-model="selectedCustomer" class="flex-1 bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-primary focus:border-primary block p-2.5">
+                                <option value="" disabled selected>Select a client...</option>
+                                <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.name }} ({{ c.type }})</option>
+                            </select>
+                            <button @click="showModal = true" class="bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg px-3 transition">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                        </div>
+
+                        <div v-if="selectedCustomerData" class="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                            <p class="text-sm font-bold text-blue-900"><i class="fa-solid fa-building mr-2"></i> {{ selectedCustomerData.name }}</p>
+                            <p class="text-xs text-blue-700 mt-1 pl-6">Client ID: {{ selectedCustomerData.id }}</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Internal Notes</label>
+                        <textarea v-model="notes" rows="4" class="block p-2.5 w-full text-sm text-slate-900 bg-slate-50 rounded-lg border border-slate-300 focus:ring-primary focus:border-primary" placeholder="Gate codes, warnings, etc..."></textarea>
+                    </div>
+
+                </div>
+
+                <div class="col-span-12 lg:col-span-8 space-y-6">
+                    
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 min-h-[500px] flex flex-col">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-slate-700">Line Items</h3>
+                            <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded">Draft Mode</span>
+                        </div>
+
+                        <div class="flex gap-2 mb-6">
+                            <select v-model="selectedPart" class="flex-1 bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5">
+                                <option value="" disabled selected>Search catalog...</option>
+                                <option v-for="p in catalog" :key="p.id" :value="p">
+                                    {{ p.name }} — ${{ p.price }}
+                                </option>
+                            </select>
+                            <input v-model="qtyInput" type="number" min="1" class="w-20 bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5" placeholder="Qty">
+                            <button @click="addItem" class="bg-secondary hover:bg-slate-700 text-white font-medium rounded-lg text-sm px-5 py-2.5 transition">Add</button>
+                        </div>
+
+                        <div class="flex-1">
+                            <table class="w-full text-sm text-left text-slate-600">
+                                <thead class="text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                                    <tr>
+                                        <th class="px-4 py-3">Description</th>
+                                        <th class="px-4 py-3 text-center">Qty</th>
+                                        <th class="px-4 py-3 text-right">Price</th>
+                                        <th class="px-4 py-3 text-right">Total</th>
+                                        <th class="px-4 py-3"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(item, index) in cart" :key="index" class="border-b border-slate-50 hover:bg-slate-50">
+                                        <td class="px-4 py-3 font-medium text-slate-900">{{ item.name }}</td>
+                                        <td class="px-4 py-3 text-center">
+                                            <input type="number" v-model="item.qty" class="w-12 text-center border rounded bg-white" min="1">
+                                        </td>
+                                        <td class="px-4 py-3 text-right">${{ item.price.toFixed(2) }}</td>
+                                        <td class="px-4 py-3 text-right font-bold">${{ (item.price * item.qty).toFixed(2) }}</td>
+                                        <td class="px-4 py-3 text-right">
+                                            <button @click="removeItem(index)" class="text-red-400 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="cart.length === 0">
+                                        <td colspan="5" class="px-4 py-8 text-center text-slate-400 italic">No items added yet. Select from the catalog above.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="border-t border-slate-100 pt-4 mt-4 flex justify-end">
+                            <div class="w-64 space-y-2">
+                                <div class="flex justify-between text-sm text-slate-500">
+                                    <span>Subtotal</span>
+                                    <span>${{ subtotal.toFixed(2) }}</span>
+                                </div>
+                                <div class="flex justify-between text-sm text-slate-500">
+                                    <span>Tax (8.25%)</span>
+                                    <span>${{ tax.toFixed(2) }}</span>
+                                </div>
+                                <div class="flex justify-between text-xl font-bold text-slate-800 pt-2 border-t border-slate-100">
+                                    <span>Total</span>
+                                    <span>${{ total.toFixed(2) }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div v-if="showModal" class="fixed inset-0 bg-slate-900 bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-xl shadow-xl p-6 w-96">
+                <h3 class="text-lg font-bold text-slate-800 mb-4">Add New Account</h3>
+                <div class="space-y-3">
+                    <input v-model="newClient.name" placeholder="Company / Client Name" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm">
+                    <select v-model="newClient.type" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm">
+                        <option value="Commercial">Commercial</option>
+                        <option value="Residential">Residential</option>
+                    </select>
+                    <input v-model="newClient.email" placeholder="Email" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm">
+                    <div class="flex justify-end gap-2 mt-4">
+                        <button @click="showModal = false" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+                        <button @click="createClient" class="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-blue-600">Save Client</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<script>
+    const { createApp } = Vue
+
+    createApp({
+        data() {
+            return {
+                customers: [],
+                catalog: [],
+                cart: [],
+                selectedCustomer: "",
+                selectedPart: "",
+                qtyInput: 1,
+                notes: "",
+                showModal: false,
+                newClient: { name: "", type: "Commercial", email: "", phone: "", address: "" }
+            }
+        },
+        computed: {
+            selectedCustomerData() {
+                return this.customers.find(c => c.id === this.selectedCustomer)
+            },
+            subtotal() {
+                return this.cart.reduce((sum, item) => sum + (item.price * item.qty), 0)
+            },
+            tax() {
+                return this.subtotal * 0.0825
+            },
+            total() {
+                return this.subtotal + this.tax
+            }
+        },
+        mounted() {
+            this.fetchData()
+        },
+        methods: {
+            async fetchData() {
+                const res = await fetch('/api/init-data');
+                const data = await res.json();
+                this.customers = data.customers;
+                this.catalog = data.catalog;
+            },
+            addItem() {
+                if (!this.selectedPart) return;
+                this.cart.push({
+                    id: this.selectedPart.id,
+                    name: this.selectedPart.name,
+                    price: this.selectedPart.price,
+                    qty: this.qtyInput
+                });
+                this.selectedPart = "";
+                this.qtyInput = 1;
+            },
+            removeItem(index) {
+                this.cart.splice(index, 1);
+            },
+            async createClient() {
+                if (!this.newClient.name) return;
+                const res = await fetch('/api/customers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.newClient)
+                });
+                const data = await res.json();
+                this.customers = data.customers; // Update list
+                this.showModal = false;
+                this.newClient = { name: "", type: "Commercial", email: "", phone: "", address: "" };
+            },
+            async saveQuote() {
+                if (!this.selectedCustomer) { alert("Please select a customer first."); return; }
+                const payload = {
+                    customer_id: this.selectedCustomer,
+                    items: this.cart,
+                    total: this.total,
+                    notes: this.notes
+                };
+                const res = await fetch('/api/quotes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                alert("Quote Saved! ID: " + data.id);
+                // Reset form
+                this.cart = [];
+                this.selectedCustomer = "";
+                this.notes = "";
+            }
+        }
+    }).mount('#app')
+</script>
+
+</body>
+</html>
