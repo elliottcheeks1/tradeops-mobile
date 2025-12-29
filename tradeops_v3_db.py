@@ -4,11 +4,16 @@ from datetime import datetime
 import uuid
 import os
 
-# NEW FILENAME: Forces a fresh start
+# We keep the name but we will WIPE it every time
 DB_NAME = "tradeops_v7_final.db"
 
 def init_db():
-    new_db = not os.path.exists(DB_NAME)
+    # --- NUCLEAR OPTION: DELETE DB ON STARTUP ---
+    if os.path.exists(DB_NAME):
+        print(f"⚠️ DELETING OLD DATABASE: {DB_NAME}")
+        os.remove(DB_NAME)
+    
+    print("✅ CREATING NEW DATABASE...")
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
@@ -66,57 +71,46 @@ def init_db():
     )''')
     
     conn.commit()
-    
-    # ALWAYS RUN SEED CHECK
-    seed_data(conn)
+    seed_data(conn) # FORCE SEED
     conn.close()
 
 def seed_data(conn):
     c = conn.cursor()
-    print("--- CHECKING FOR SEED DATA ---")
+    print("🌱 SEEDING DATA...")
     
-    # --- SEED LABOR ---
-    c.execute("SELECT count(*) FROM labor_rates")
-    count = c.fetchone()[0]
-    if count == 0:
-        print("SEEDING LABOR...")
-        labor = [
-            ("Apprentice", 20.0, 65.0),
-            ("Journeyman Tech", 35.0, 95.0),
-            ("Master Electrician", 55.0, 150.0),
-            ("HVAC Lead", 45.0, 125.0)
-        ]
-        c.executemany("INSERT INTO labor_rates VALUES (?,?,?)", labor)
+    # --- LABOR ---
+    labor = [
+        ("Apprentice", 20.0, 65.0),
+        ("Journeyman Tech", 35.0, 95.0),
+        ("Master Electrician", 55.0, 150.0),
+        ("HVAC Lead", 45.0, 125.0)
+    ]
+    c.executemany("INSERT INTO labor_rates VALUES (?,?,?)", labor)
+    print(f"   - Added {len(labor)} Labor Roles")
 
-    # --- SEED PARTS ---
-    c.execute("SELECT count(*) FROM parts_catalog")
-    count = c.fetchone()[0]
-    if count == 0:
-        print("SEEDING PARTS...")
-        parts = [
-            ("P101", "Capacitor 45/5 MFD", 12.50, 85.00),
-            ("P102", "Contactor 2-Pole 30A", 18.00, 125.00),
-            ("P103", "R410a Refrigerant (lb)", 15.00, 95.00),
-            ("P104", "Hard Start Kit", 35.00, 245.00),
-            ("P201", "PVC Pipe 2 inch (10ft)", 8.00, 25.00),
-            ("P301", "Breaker 20 Amp", 9.00, 35.00)
-        ]
-        c.executemany("INSERT INTO parts_catalog VALUES (?,?,?,?)", parts)
+    # --- PARTS ---
+    parts = [
+        ("P101", "Capacitor 45/5 MFD", 12.50, 85.00),
+        ("P102", "Contactor 2-Pole 30A", 18.00, 125.00),
+        ("P103", "R410a Refrigerant (lb)", 15.00, 95.00),
+        ("P104", "Hard Start Kit", 35.00, 245.00),
+        ("P201", "PVC Pipe 2 inch (10ft)", 8.00, 25.00),
+        ("P301", "Breaker 20 Amp", 9.00, 35.00)
+    ]
+    c.executemany("INSERT INTO parts_catalog VALUES (?,?,?,?)", parts)
+    print(f"   - Added {len(parts)} Parts")
 
-    # --- SEED CUSTOMERS ---
-    c.execute("SELECT count(*) FROM customers")
-    count = c.fetchone()[0]
-    if count == 0:
-        print("SEEDING CUSTOMERS...")
-        customers = [
-            ("C001", "Walmart Supercenter", "8800 Retail Pkwy", "Dallas", "TX", "75001", "555-0101", "mgr@walmart.com"),
-            ("C002", "Burger King", "450 Whopper Way", "Houston", "TX", "77002", "555-0200", "bk@loves.com"),
-            ("C003", "Residential - Smith", "12 Maple Dr", "Austin", "TX", "78701", "555-9999", "smith@gmail.com")
-        ]
-        c.executemany("INSERT INTO customers VALUES (?,?,?,?,?,?,?,?)", customers)
+    # --- CUSTOMERS ---
+    customers = [
+        ("C001", "Walmart Supercenter", "8800 Retail Pkwy", "Dallas", "TX", "75001", "555-0101", "mgr@walmart.com"),
+        ("C002", "Burger King", "450 Whopper Way", "Houston", "TX", "77002", "555-0200", "bk@loves.com"),
+        ("C003", "Residential - Smith", "12 Maple Dr", "Austin", "TX", "78701", "555-9999", "smith@gmail.com")
+    ]
+    c.executemany("INSERT INTO customers VALUES (?,?,?,?,?,?,?,?)", customers)
+    print(f"   - Added {len(customers)} Customers")
         
     conn.commit()
-    print("--- SEEDING COMPLETE ---")
+    print("✅ SEEDING COMPLETE")
 
 # --- DATA ACCESS ---
 
