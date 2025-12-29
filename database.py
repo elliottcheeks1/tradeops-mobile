@@ -3,23 +3,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 
-# For now, SQLite file in the project root.
+# DATABASE_URL format examples:
+# - Local SQLite: sqlite:///./tradeops.db   (default for dev)
+# - Neon Postgres: postgresql+psycopg2://USER:PASSWORD@HOST/DBNAME?sslmode=require
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./tradeops.db")
 
-engine = create_engine(
-    DB_URL,
-    connect_args={"check_same_thread": False} if DB_URL.startswith("sqlite") else {},
-)
+connect_args = {}
+if DB_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(DB_URL, connect_args=connect_args)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 
 def get_db():
-    """
-    FastAPI dependency that yields a database session.
-    """
     db = SessionLocal()
     try:
         yield db
