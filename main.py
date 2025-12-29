@@ -1,55 +1,42 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.wsgi import WSGIMiddleware
+from frontend_app import dash_app  # <-- import the Dash app
 
 app = FastAPI(
     title="TradeOps API",
-    version="0.1.0",
-    description="Backend for TradeOps mobile & web apps",
+    description="Backend API + Dash UI",
+    version="0.1.0"
 )
 
-# --- CORS ---
+# Allow frontend UI & local dev to call API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Root (Render hits this) ---
+# Health endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+# Root response - API metadata
 @app.get("/")
 def root():
-    return {
+    return JSONResponse({
         "service": "TradeOps API",
         "status": "ok",
         "docs": "/docs",
-        "endpoints": ["/health", "/quotes"],
-    }
+        "endpoints": ["/health", "/quotes", "/app"]
+    })
 
+# ---- Mount the Dash UI here ---- #
+# Dash is exposed at: https://tradeops.onrender.com/app
+app.mount("/app", WSGIMiddleware(dash_app.server))
+# -------------------------------- #
 
-# --- Health ---
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-# --- Mock quotes ---
-MOCK_QUOTES = [
-    {
-        "id": "QDEMO1",
-        "customer_name": "Mrs. Jones",
-        "total": 1850.00,
-        "status": "Open",
-    },
-    {
-        "id": "QDEMO2",
-        "customer_name": "ACME Rentals",
-        "total": 3250.00,
-        "status": "Won",
-    },
-]
-
-
-@app.get("/quotes")
-def list_quotes():
-    return MOCK_QUOTES
+# (If you added quotes endpoints, they remain unchanged)
