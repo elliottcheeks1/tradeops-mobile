@@ -11,7 +11,7 @@ db.init_db()
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.ZEPHYR, dbc.icons.BOOTSTRAP],
                 meta_tags=[{'name': 'viewport', 'content': 'width=device-width, initial-scale=1.0'}])
-app.title = "TradeOps Field V6"
+app.title = "TradeOps Field V6.1"
 server = app.server
 
 # --- PDF ENGINE ---
@@ -59,7 +59,7 @@ def generate_pdf(quote_id, customer_name, items, total):
 
 # --- LAYOUTS ---
 
-# 1. FOLLOW-UP QUEUE (Restored from V4)
+# 1. FOLLOW-UP QUEUE
 followup_tab = dbc.Container([
     html.H4("📞 Follow-Up Queue", className="mt-3"),
     dbc.Button("↻ Refresh", id="btn-refresh-fup", color="light", size="sm", className="mb-2"),
@@ -99,7 +99,7 @@ followup_tab = dbc.Container([
 ], fluid=True)
 
 
-# 2. HISTORY TAB (With Tech Filter)
+# 2. HISTORY TAB
 history_tab = dbc.Container([
     html.H4("📂 Quote History", className="mt-3"),
     dbc.Row([
@@ -210,7 +210,7 @@ def load_data(tab, n_filter, n_refresh, filter_name):
     
     return c_opts, p_opts, l_opts, hist_data
 
-# 2. FOLLOW-UP LOGIC (Restored)
+# 2. FOLLOW-UP LOGIC
 @app.callback(
     [Output("modal-log", "is_open"), Output("fup-table", "data"), Output("btn-open-log", "disabled")],
     [Input("btn-open-log", "n_clicks"), Input("btn-save-log", "n_clicks"), Input("tabs", "active_tab"), Input("btn-refresh-fup", "n_clicks"), Input("fup-table", "selected_rows")],
@@ -219,11 +219,10 @@ def load_data(tab, n_filter, n_refresh, filter_name):
 def handle_followup(n_open, n_save, tab, n_refresh, selected, is_open, table_data, outcome, next_date):
     trigger = ctx.triggered_id
     
-    # Enable button only if selected
     btn_disabled = True if not selected else False
     
     if trigger == "tabs" or trigger == "btn-refresh-fup":
-        return False, db.get_followup_queue().to_dict('records'), True # Disable button on refresh
+        return False, db.get_followup_queue().to_dict('records'), True 
 
     if trigger == "fup-table":
         return is_open, dash.no_update, btn_disabled
@@ -238,7 +237,7 @@ def handle_followup(n_open, n_save, tab, n_refresh, selected, is_open, table_dat
         
     return is_open, dash.no_update, btn_disabled
 
-# 3. HISTORY ACTIONS (EDIT / PDF) - FIXING ARITY
+# 3. HISTORY ACTIONS (EDIT / PDF)
 @app.callback(
     [Output("tabs", "active_tab", allow_duplicate=True), 
      Output("cust-select", "value", allow_duplicate=True),
@@ -256,15 +255,12 @@ def handle_followup(n_open, n_save, tab, n_refresh, selected, is_open, table_dat
 def handle_history_actions(btn_edit, btn_pdf, selected, data):
     trigger = ctx.triggered_id
     
-    # Enable buttons when row selected
     if trigger == "history-table":
         has_sel = True if selected else False
-        # Return 9 outputs (dash.no_update for UI changes, False/True for buttons)
         return (dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 dash.no_update, dash.no_update, dash.no_update, not has_sel, not has_sel)
 
     if not selected: 
-        # Safety catch with correct arity
         return (dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 dash.no_update, dash.no_update, dash.no_update, True, True)
 
@@ -276,7 +272,7 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
             columns={'item_name':'name', 'item_type':'type', 'unit_cost':'cost', 'unit_price':'price', 'quantity':'qty'}
         ).to_dict('records')
         edit_data = {"mode": "edit", "qid": row['quote_id']}
-        # Switch tab, load data, clear PDF
+        
         return ("tab-quote", header['customer_id'], header['job_type'], header['estimator'], 
                 cart, edit_data, dash.no_update, True, True)
 
@@ -284,14 +280,13 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
         header, items_df = db.get_quote_details(row['quote_id'])
         items = items_df[['item_name', 'unit_price', 'quantity']].rename(columns={'item_name':'name', 'unit_price':'price', 'quantity':'qty'}).to_dict('records')
         pdf_file = generate_pdf(row['quote_id'], row['name'], items, header['total_price'])
-        # Send file
         return (dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 dash.no_update, dash.no_update, dcc.send_file(pdf_file), False, False)
 
     return (dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
             dash.no_update, dash.no_update, dash.no_update, True, True)
 
-# 4. CUSTOMER & CART (Same as before)
+# 4. CUSTOMER & CART
 @app.callback(
     [Output("nc-modal", "is_open"), Output("cust-select", "value")],
     [Input("btn-new-cust", "n_clicks"), Input("btn-save-nc", "n_clicks")],
