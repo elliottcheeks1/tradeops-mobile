@@ -7,11 +7,12 @@ from datetime import datetime, timedelta
 import re
 import os
 
+# FORCE DB INIT ON STARTUP
 db.init_db()
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.ZEPHYR, dbc.icons.BOOTSTRAP],
                 meta_tags=[{'name': 'viewport', 'content': 'width=device-width, initial-scale=1.0'}])
-app.title = "TradeOps Field V6.1"
+app.title = "TradeOps Field V7"
 server = app.server
 
 # --- PDF ENGINE ---
@@ -184,7 +185,7 @@ quote_tab = dbc.Container([
 
 app.layout = html.Div([
     dcc.Store(id="cart-store", data=[]),
-    dbc.NavbarSimple(brand="TradeOps Field V6", color="dark", dark=True),
+    dbc.NavbarSimple(brand="TradeOps Field V7", color="dark", dark=True),
     dbc.Tabs([
         dbc.Tab(followup_tab, label="Follow-Up", tab_id="tab-fup"),
         dbc.Tab(history_tab, label="History", tab_id="tab-hist"),
@@ -194,7 +195,7 @@ app.layout = html.Div([
 
 # --- LOGIC ---
 
-# 1. LOAD DATA & FILTER HISTORY
+# 1. LOAD DATA
 @app.callback(
     [Output("cust-select", "options"), Output("part-select", "options"), Output("labor-select", "options"), Output("history-table", "data")],
     [Input("tabs", "active_tab"), Input("btn-filter-hist", "n_clicks"), Input("btn-refresh-hist", "n_clicks")],
@@ -237,7 +238,7 @@ def handle_followup(n_open, n_save, tab, n_refresh, selected, is_open, table_dat
         
     return is_open, dash.no_update, btn_disabled
 
-# 3. HISTORY ACTIONS (EDIT / PDF)
+# 3. HISTORY ACTIONS
 @app.callback(
     [Output("tabs", "active_tab", allow_duplicate=True), 
      Output("cust-select", "value", allow_duplicate=True),
