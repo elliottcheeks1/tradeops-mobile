@@ -4,9 +4,9 @@ import requests
 from datetime import datetime
 
 import dash
-from dash import dcc, html, Input, Output, State, ctx
-import dash_bootstrap_components as dbc
-import dash_table
+from dash import dcc, html, Input, Output, State, dash_table
+# ⬆ this replaces the old `import dash_table`
+
 
 # ==============================
 # CONFIG
