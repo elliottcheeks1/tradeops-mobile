@@ -1,7 +1,0 @@
-dash
-dash-bootstrap-components
-pandas
-sqlalchemy
-psycopg2-binary
-gunicorn
-fpdf==1.7.2
