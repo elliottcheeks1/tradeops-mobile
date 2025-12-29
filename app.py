@@ -21,22 +21,18 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # Customers Table (Added Type and Phone)
     c.execute('''CREATE TABLE IF NOT EXISTS customers 
                  (id TEXT PRIMARY KEY, name TEXT, address TEXT, email TEXT, phone TEXT, type TEXT)''')
     
-    # Catalog Table
     c.execute('''CREATE TABLE IF NOT EXISTS catalog 
                  (id TEXT PRIMARY KEY, name TEXT, type TEXT, cost REAL, price REAL)''')
     
-    # Quotes Table
     c.execute('''CREATE TABLE IF NOT EXISTS quotes 
                  (id TEXT PRIMARY KEY, customer_id TEXT, status TEXT, 
                   created_at TEXT, scheduled_date TEXT, tech TEXT, 
                   items_json TEXT, tax REAL, discount REAL, fee REAL, 
                   notes TEXT, total REAL)''')
     
-    # Seed Data (Only if empty)
     c.execute("SELECT count(*) FROM customers")
     if c.fetchone()[0] == 0:
         customers = [
@@ -85,8 +81,30 @@ THEME = {
 
 custom_css = f"""
     body {{ background-color: {THEME['bg_main']}; font-family: 'Inter', sans-serif; color: {THEME['text']}; }}
-    .sidebar {{ position: fixed; top: 0; left: 0; bottom: 0; width: 250px; padding: 2rem 1rem; background: #fff; border-right: 1px solid #eee; z-index: 1000; }}
-    .content {{ margin-left: 260px; padding: 2rem; }}
+    
+    /* Desktop Sidebar (Default) */
+    .sidebar {{ position: fixed; top: 0; left: 0; bottom: 0; width: 250px; padding: 2rem 1rem; background: #fff; border-right: 1px solid #eee; z-index: 1000; overflow-y: auto; }}
+    .content {{ margin-left: 260px; padding: 2rem; transition: 0.3s; }}
+    
+    /* MOBILE OVERRIDES (Screens smaller than 768px) */
+    @media (max-width: 768px) {{
+        .sidebar {{ 
+            position: relative; 
+            width: 100%; 
+            height: auto; 
+            padding: 1rem; 
+            border-right: none; 
+            border-bottom: 2px solid #eee;
+            display: flex;
+            flex-direction: row;
+            overflow-x: auto;
+            white-space: nowrap;
+        }}
+        .content {{ margin-left: 0; padding: 1rem; }}
+        .nav-link {{ display: inline-block; margin-right: 15px; }}
+        .saas-card {{ padding: 1rem; }}
+    }}
+
     .saas-card {{ background: #fff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #f0f0f0; }}
     
     /* Stepper */
@@ -103,12 +121,6 @@ custom_css = f"""
     /* Tables */
     .dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner th {{ background-color: #f8f9fa !important; font-weight: 600 !important; border-bottom: 2px solid #eee !important; }}
     .dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner td {{ border-bottom: 1px solid #eee !important; }}
-    
-    /* Badges */
-    .badge-status-draft {{ background-color: #e9ecef; color: #495057; padding: 5px 10px; border-radius: 12px; font-size: 0.85em; }}
-    .badge-status-sent {{ background-color: #cff4fc; color: #055160; padding: 5px 10px; border-radius: 12px; font-size: 0.85em; }}
-    .badge-status-scheduled {{ background-color: #fff3cd; color: #664d03; padding: 5px 10px; border-radius: 12px; font-size: 0.85em; }}
-    .badge-status-paid {{ background-color: #d1e7dd; color: #0f5132; padding: 5px 10px; border-radius: 12px; font-size: 0.85em; }}
 """
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.BOOTSTRAP])
@@ -187,10 +199,6 @@ def JobStepper(status):
         cols.append(dbc.Col(html.Div([html.Div(icon, className="step-circle"), html.Small(step, className="fw-bold")], className=cls)))
     return html.Div(dbc.Row(cols, className="g-0"), className="mb-4 pt-3 pb-3 border-bottom")
 
-def StatusBadge(status):
-    colors = {"Draft": "secondary", "Sent": "info", "Approved": "primary", "Scheduled": "warning", "Invoiced": "dark", "Paid": "success"}
-    return dbc.Badge(status, color=colors.get(status, "light"), className="p-2", pill=True)
-
 # =========================================================
 #   5. VIEWS
 # =========================================================
@@ -199,12 +207,10 @@ def DashboardView():
     df_quotes = get_df("SELECT * FROM quotes")
     df_quotes['created_at'] = pd.to_datetime(df_quotes['created_at'])
     
-    # KPIs
     monthly_rev = df_quotes[df_quotes['created_at'] >= (datetime.now() - timedelta(days=30))]['total'].sum()
     open_pipeline = df_quotes[df_quotes['status'].isin(['Draft', 'Sent', 'Approved'])]['total'].sum()
     jobs_scheduled = len(df_quotes[df_quotes['status'] == 'Scheduled'])
     
-    # Chart 1: Revenue Trend
     if not df_quotes.empty:
         rev_trend = df_quotes.groupby('created_at')['total'].sum().reset_index()
         fig_trend = px.line(rev_trend, x='created_at', y='total', title="Revenue Trend (30 Days)", markers=True)
@@ -213,10 +219,8 @@ def DashboardView():
     else:
         fig_trend = {}
 
-    # Chart 2: Pipeline Funnel
     pipeline_counts = df_quotes['status'].value_counts().reset_index()
     pipeline_counts.columns = ['Stage', 'Count']
-    # Force order
     stage_order = ["Draft", "Sent", "Approved", "Scheduled", "Invoiced", "Paid"]
     fig_funnel = px.bar(pipeline_counts, x='Stage', y='Count', title="Pipeline Volume", 
                         category_orders={"Stage": stage_order}, color='Stage')
@@ -230,7 +234,6 @@ def DashboardView():
             dbc.Col(html.Div([html.H6("Jobs Scheduled", className="text-muted"), html.H3(str(jobs_scheduled), className="fw-bold")], className="saas-card"), md=3),
             dbc.Col(html.Div([html.H6("Goal Progress"), dbc.Progress(value=(monthly_rev/50000)*100, color="success", className="mt-2", style={"height": "10px"}), html.Small("Target: $50k", className="text-muted")], className="saas-card"), md=3),
         ], className="mb-2"),
-        
         dbc.Row([
             dbc.Col(html.Div(dcc.Graph(figure=fig_trend, config={'displayModeBar': False}), className="saas-card h-100"), md=8),
             dbc.Col(html.Div(dcc.Graph(figure=fig_funnel, config={'displayModeBar': False}), className="saas-card h-100"), md=4),
@@ -239,23 +242,33 @@ def DashboardView():
 
 def AccountsView():
     df = get_df("SELECT * FROM customers")
-    
     return html.Div([
+        dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle("Add New Account")),
+            dbc.ModalBody([
+                dbc.Label("Company / Name"),
+                dbc.Input(id="new-cust-name", placeholder="e.g. Starbucks #505", className="mb-3"),
+                dbc.Row([
+                    dbc.Col([dbc.Label("Type"), dbc.Select(id="new-cust-type", options=[{"label": "Commercial", "value": "Commercial"}, {"label": "Residential", "value": "Residential"}], value="Commercial")], width=6),
+                    dbc.Col([dbc.Label("Phone"), dbc.Input(id="new-cust-phone", placeholder="555-0000")], width=6)
+                ], className="mb-3"),
+                dbc.Label("Address"),
+                dbc.Input(id="new-cust-address", placeholder="123 Main St...", className="mb-3"),
+                dbc.Label("Email"),
+                dbc.Input(id="new-cust-email", placeholder="billing@company.com"),
+            ]),
+            dbc.ModalFooter(dbc.Button("Save Account", id="btn-save-new-account", color="primary"))
+        ], id="modal-new-account", is_open=False),
+
         dbc.Row([
             dbc.Col(html.H2("Accounts Directory", className="fw-bold"), width=9),
-            dbc.Col(dbc.Button("+ New Account", color="primary", className="float-end"), width=3)
+            dbc.Col(dbc.Button("+ New Account", id="btn-open-account-modal", color="primary", className="float-end"), width=3)
         ], className="mb-4"),
         
         html.Div([
             dash_table.DataTable(
                 id='accounts-table',
-                columns=[
-                    {"name": "Name", "id": "name"},
-                    {"name": "Type", "id": "type"},
-                    {"name": "Address", "id": "address"},
-                    {"name": "Phone", "id": "phone"},
-                    {"name": "Action", "id": "id", "presentation": "markdown"} # Placeholder for button
-                ],
+                columns=[{"name": "Name", "id": "name"}, {"name": "Type", "id": "type"}, {"name": "Address", "id": "address"}, {"name": "Phone", "id": "phone"}],
                 data=df.to_dict('records'),
                 style_as_list_view=True,
                 style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
@@ -299,27 +312,14 @@ def AccountDetailView(cust_id):
     ])
 
 def JobsView():
-    # Only show converted jobs
-    df = get_df("""
-        SELECT q.id, c.name as customer, q.status, q.scheduled_date, q.tech, q.total 
-        FROM quotes q JOIN customers c ON q.customer_id = c.id 
-        WHERE q.status IN ('Scheduled', 'Invoiced', 'Paid')
-        ORDER BY q.scheduled_date ASC
-    """)
+    df = get_df("SELECT q.id, c.name as customer, q.status, q.scheduled_date, q.tech, q.total FROM quotes q JOIN customers c ON q.customer_id = c.id WHERE q.status IN ('Scheduled', 'Invoiced', 'Paid') ORDER BY q.scheduled_date ASC")
     
     return html.Div([
         html.H2("Active Jobs", className="fw-bold mb-4"),
         html.Div([
             dash_table.DataTable(
                 id='jobs-table',
-                columns=[
-                    {"name": "Job ID", "id": "id"},
-                    {"name": "Scheduled Date", "id": "scheduled_date"},
-                    {"name": "Customer", "id": "customer"},
-                    {"name": "Tech", "id": "tech"},
-                    {"name": "Status", "id": "status"},
-                    {"name": "Total", "id": "total", "type": "numeric", "format": {"specifier": "$,.2f"}},
-                ],
+                columns=[{"name": "Job ID", "id": "id"}, {"name": "Scheduled Date", "id": "scheduled_date"}, {"name": "Customer", "id": "customer"}, {"name": "Tech", "id": "tech"}, {"name": "Status", "id": "status"}, {"name": "Total", "id": "total", "type": "numeric", "format": {"specifier": "$,.2f"}}],
                 data=df.to_dict('records'),
                 style_as_list_view=True,
                 style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
@@ -334,13 +334,7 @@ def JobsView():
     ])
 
 def PipelineView():
-    # Show pre-job quotes
-    df = get_df("""
-        SELECT q.id, c.name as customer, q.status, q.total, q.created_at, q.tech 
-        FROM quotes q JOIN customers c ON q.customer_id = c.id 
-        WHERE q.status IN ('Draft', 'Sent', 'Approved')
-        ORDER BY q.created_at DESC
-    """)
+    df = get_df("SELECT q.id, c.name as customer, q.status, q.total, q.created_at, q.tech FROM quotes q JOIN customers c ON q.customer_id = c.id WHERE q.status IN ('Draft', 'Sent', 'Approved') ORDER BY q.created_at DESC")
     
     return html.Div([
         dbc.Row([
@@ -351,13 +345,7 @@ def PipelineView():
         html.Div([
             dash_table.DataTable(
                 id='pipeline-table',
-                columns=[
-                    {"name": "ID", "id": "id"},
-                    {"name": "Customer", "id": "customer"},
-                    {"name": "Status", "id": "status"},
-                    {"name": "Date", "id": "created_at"},
-                    {"name": "Total", "id": "total", "type": "numeric", "format": {"specifier": "$,.2f"}},
-                ],
+                columns=[{"name": "ID", "id": "id"}, {"name": "Customer", "id": "customer"}, {"name": "Status", "id": "status"}, {"name": "Date", "id": "created_at"}, {"name": "Total", "id": "total", "type": "numeric", "format": {"specifier": "$,.2f"}}],
                 data=df.to_dict('records'),
                 style_as_list_view=True,
                 style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
@@ -368,13 +356,8 @@ def PipelineView():
     ])
 
 def QuoteBuilderView(quote_id=None):
-    # Default State
-    state = {
-        "id": "Q-NEW", "status": "Draft", "customer_id": None, "items": [], 
-        "tax": 0, "discount": 0, "fee": 0, "notes": "", "tech": "Unassigned", "scheduled_date": None
-    }
+    state = {"id": "Q-NEW", "status": "Draft", "customer_id": None, "items": [], "tax": 0, "discount": 0, "fee": 0, "notes": "", "tech": "Unassigned", "scheduled_date": None}
     
-    # Load Existing Quote
     if quote_id and quote_id != "new":
         df = get_df("SELECT * FROM quotes WHERE id = ?", (quote_id,))
         if not df.empty:
@@ -389,19 +372,15 @@ def QuoteBuilderView(quote_id=None):
     customers = get_df("SELECT id, name FROM customers")
     catalog = get_df("SELECT * FROM catalog")
 
-    # Schedule Display Logic
     schedule_banner = html.Div()
     if state['scheduled_date']:
-        schedule_banner = dbc.Alert([
-            html.I(className="bi bi-calendar-check-fill me-2"),
-            f"Service Scheduled: {state['scheduled_date']} with {state['tech']}"
-        ], color="success", className="mb-3 fw-bold")
+        schedule_banner = dbc.Alert([html.I(className="bi bi-calendar-check-fill me-2"), f"Service Scheduled: {state['scheduled_date']} with {state['tech']}"], color="success", className="mb-3 fw-bold")
 
     return html.Div([
         dcc.Store(id="quote-state", data=state),
         dcc.Download(id="download-pdf"),
+        dbc.Button("← Back to Pipeline", href="/pipeline", color="link", className="mb-2 ps-0", style={"textDecoration": "none"}),
         
-        # Scheduling Modal
         dbc.Modal([
             dbc.ModalHeader("Convert to Job"),
             dbc.ModalBody([
@@ -414,26 +393,13 @@ def QuoteBuilderView(quote_id=None):
             dbc.ModalFooter(dbc.Button("Confirm & Schedule", id="btn-confirm-schedule", color="primary"))
         ], id="modal-schedule", is_open=False),
 
-        # Header
-        dbc.Row([
-            dbc.Col([
-                html.H2(f"Quote: {state['id']}", className="fw-bold"),
-                schedule_banner
-            ], width=8),
-            dbc.Col(html.Div(id="stepper-container"), width=12)
-        ]),
+        dbc.Row([dbc.Col([html.H2(f"Quote: {state['id']}", className="fw-bold"), schedule_banner], width=8), dbc.Col(html.Div(id="stepper-container"), width=12)]),
 
         dbc.Row([
-            # LEFT: Customer & Actions
             dbc.Col([
                 html.Div([
                     html.H5("Customer Info", className="fw-bold mb-3"),
-                    dcc.Dropdown(
-                        id="cust-select", 
-                        options=[{'label': r['name'], 'value': r['id']} for _, r in customers.iterrows()], 
-                        value=state['customer_id'],
-                        placeholder="Select Customer..."
-                    ),
+                    dcc.Dropdown(id="cust-select", options=[{'label': r['name'], 'value': r['id']} for _, r in customers.iterrows()], value=state['customer_id'], placeholder="Select Customer..."),
                     html.Br(),
                     dbc.Label("Internal Notes"),
                     dbc.Textarea(id="quote-notes", value=state['notes'], placeholder="Access codes, warnings...", style={"height": "100px"}),
@@ -444,7 +410,6 @@ def QuoteBuilderView(quote_id=None):
                 ], className="saas-card h-100")
             ], md=4),
 
-            # RIGHT: Line Items
             dbc.Col([
                 html.Div([
                     html.H5("Line Items", className="fw-bold mb-3"),
@@ -456,43 +421,28 @@ def QuoteBuilderView(quote_id=None):
 
                     html.Div(id="cart-container", className="mb-4"),
                     html.Hr(),
-                    
                     dbc.Row([
                         dbc.Col([dbc.Label("Discount ($)"), dbc.Input(id="in-discount", type="number", value=state['discount'])], md=4),
                         dbc.Col([dbc.Label("Tax ($)"), dbc.Input(id="in-tax", type="number", value=state['tax'])], md=4),
                         dbc.Col([dbc.Label("Trip Fee ($)"), dbc.Input(id="in-fee", type="number", value=state['fee'])], md=4),
                     ], className="mb-3"),
-
                     dbc.Row([
                         dbc.Col(html.H4("Total", className="text-muted"), width=6),
                         dbc.Col(html.H2(id="total-display", className="fw-bold text-end text-success"), width=6),
                     ]),
                     html.Small(id="margin-display", className="text-muted float-end")
-
                 ], className="saas-card h-100")
             ], md=8)
         ])
     ])
 
 def ScheduleView():
-    # Calendar View of Jobs
     df = get_df("SELECT * FROM quotes WHERE status IN ('Scheduled', 'Invoiced', 'Paid')")
+    chart = html.Div("No jobs scheduled yet.", className="text-center text-muted p-5")
+    if not df.empty:
+        chart = dcc.Graph(id="schedule-graph", figure=px.timeline(df, x_start="scheduled_date", x_end="scheduled_date", y="tech", color="tech", text="id", title="Technician Schedule").update_layout(template="plotly_white", height=500).update_traces(width=0.5), config={'displayModeBar': False})
     
-    if df.empty:
-        chart = html.Div("No jobs scheduled yet.", className="text-center text-muted p-5")
-    else:
-        chart = dcc.Graph(
-            figure=px.timeline(
-                df, x_start="scheduled_date", x_end="scheduled_date", y="tech", color="tech", 
-                text="id", title="Technician Schedule"
-            ).update_layout(template="plotly_white", height=500).update_traces(width=0.5),
-            config={'displayModeBar': False}
-        )
-    
-    return html.Div([
-        html.H2("Dispatch Calendar", className="fw-bold mb-4"),
-        html.Div(chart, className="saas-card")
-    ])
+    return html.Div([html.H2("Dispatch Calendar", className="fw-bold mb-4"), html.Div(chart, className="saas-card")])
 
 # =========================================================
 #   6. MAIN LAYOUT & CALLBACKS
@@ -519,54 +469,65 @@ def navigation(sel_pipe, sel_job, sel_acct, d_pipe, d_job, d_acct):
     if ctx_id == "accounts-table" and sel_acct: return f"/accounts/{d_acct[sel_acct[0]]['id']}"
     return dash.no_update
 
-# --- Quote Logic ---
+@app.callback(Output("url", "pathname", allow_duplicate=True), Input("schedule-graph", "clickData"), prevent_initial_call=True)
+def navigate_schedule_click(clickData):
+    if clickData: return f"/builder/{clickData['points'][0]['text']}"
+    return dash.no_update
+
 @app.callback(
-    [Output("quote-state", "data"), 
-     Output("cart-container", "children"), 
-     Output("total-display", "children"), 
-     Output("margin-display", "children"),
-     Output("stepper-container", "children"), 
-     Output("action-buttons", "children"), 
-     Output("modal-schedule", "is_open"),
-     Output("toast-container", "children")],
-    [Input("btn-add-item", "n_clicks"),
-     Input({"type": "btn-delete", "index": ALL}, "n_clicks"),
-     Input({"type": "action-btn", "index": ALL}, "n_clicks"),
-     Input("in-tax", "value"), Input("in-discount", "value"), Input("in-fee", "value"),
-     Input("btn-confirm-schedule", "n_clicks"),
-     Input("quote-notes", "value"), Input("cust-select", "value")],
-    [State("catalog-select", "value"), State("item-qty", "value"), 
-     State("quote-state", "data"), State("sched-tech", "value"), State("sched-date", "date")]
-)
-def update_quote_logic(n_add, n_del, n_action, tax, disc, fee, n_sched, notes, cust_id, 
-                       cat_id, qty, state, sched_tech, sched_date):
+    [Output("modal-new-account", "is_open"), Output("accounts-table", "data")],
+    [Input("btn-open-account-modal", "n_clicks"), Input("btn-save-new-account", "n_clicks")],
+    [State("modal-new-account", "is_open"), State("new-cust-name", "value"), State("new-cust-type", "value"),
+     State("new-cust-address", "value"), State("new-cust-phone", "value"), State("new-cust-email", "value")])
+def handle_new_account(n_open, n_save, is_open, name, c_type, addr, phone, email):
+    ctx_id = ctx.triggered_id
+    if ctx_id == "btn-open-account-modal": return True, dash.no_update
+    if ctx_id == "btn-save-new-account" and name:
+        new_id = f"C-{random.randint(1000, 9999)}"
+        execute_query("INSERT INTO customers (id, name, address, email, phone, type) VALUES (?,?,?,?,?,?)", (new_id, name, addr or "", email or "", phone or "", c_type))
+        return False, get_df("SELECT * FROM customers").to_dict('records')
+    return is_open, dash.no_update
+
+@app.callback(
+    [Output("quote-state", "data"), Output("cart-container", "children"), Output("total-display", "children"), 
+     Output("margin-display", "children"), Output("stepper-container", "children"), Output("action-buttons", "children"), 
+     Output("modal-schedule", "is_open"), Output("toast-container", "children"), Output("download-pdf", "data"), Output("in-tax", "value")],
+    [Input("btn-add-item", "n_clicks"), Input({"type": "btn-delete", "index": ALL}, "n_clicks"), Input({"type": "qty-input", "index": ALL}, "value"),
+     Input({"type": "action-btn", "index": ALL}, "n_clicks"), Input("in-tax", "value"), Input("in-discount", "value"), Input("in-fee", "value"),
+     Input("btn-confirm-schedule", "n_clicks"), Input("quote-notes", "value"), Input("cust-select", "value")],
+    [State("catalog-select", "value"), State("item-qty", "value"), State("quote-state", "data"), State("sched-tech", "value"), State("sched-date", "date")])
+def update_quote_logic(n_add, n_del, qty_values, n_action, tax, disc, fee, n_sched, notes, cust_id, cat_id, add_qty, state, sched_tech, sched_date):
     
     ctx_id = ctx.triggered_id
     toast = None
+    pdf_download = dash.no_update
     
-    # 1. Update State from Inputs
-    state.update({'tax': tax or 0, 'discount': disc or 0, 'fee': fee or 0, 'notes': notes or "", 'customer_id': cust_id})
+    state.update({'discount': disc or 0, 'fee': fee or 0, 'notes': notes or "", 'customer_id': cust_id})
 
-    # 2. Add Item
     if ctx_id == "btn-add-item" and cat_id:
         catalog = get_df("SELECT * FROM catalog WHERE id = ?", (cat_id,)).iloc[0]
-        state['items'].append({
-            "uuid": str(uuid.uuid4()), "id": catalog['id'], "name": catalog['name'], 
-            "qty": float(qty or 1), "price": catalog['price'], "cost": catalog['cost']
-        })
+        state['items'].append({"uuid": str(uuid.uuid4()), "id": catalog['id'], "name": catalog['name'], "qty": float(add_qty or 1), "price": catalog['price'], "cost": catalog['cost']})
 
-    # 3. Delete Item
     if isinstance(ctx_id, dict) and ctx_id['type'] == "btn-delete":
         state['items'] = [i for i in state['items'] if i['uuid'] != ctx_id['index']]
 
-    # 4. Financials
+    if isinstance(ctx_id, dict) and ctx_id['type'] == "qty-input":
+        target_uuid = ctx_id['index']
+        for input_obj in ctx.inputs_list[2]: 
+            if input_obj['id']['index'] == target_uuid:
+                for item in state['items']:
+                    if item['uuid'] == target_uuid:
+                        item['qty'] = float(input_obj['value'] or 0)
+                        break
+                break
+
     subtotal = sum(i['qty'] * i['price'] for i in state['items'])
     total_cost = sum(i['qty'] * i['cost'] for i in state['items'])
+    state['tax'] = round(subtotal * 0.0825, 2)
     total = subtotal + state['fee'] + state['tax'] - state['discount']
     margin = total - total_cost
     state['total'] = total
 
-    # 5. Workflow Transitions
     sched_modal_open = False
     
     def save_to_db():
@@ -588,6 +549,9 @@ def update_quote_logic(n_add, n_del, n_action, tax, disc, fee, n_sched, notes, c
             state['status'] = "Sent"
             save_to_db()
             toast = dbc.Toast("Quote Sent", header="Success", duration=2000, icon="primary", style={"position": "fixed", "top": 10, "right": 10})
+            pdf_download = dcc.send_bytes(create_pdf(state), f"Quote_{state['id']}.pdf")
+        elif action == "download":
+            pdf_download = dcc.send_bytes(create_pdf(state), f"Quote_{state['id']}.pdf")
         elif action == "approve":
             state['status'] = "Approved"
             save_to_db()
@@ -597,7 +561,6 @@ def update_quote_logic(n_add, n_del, n_action, tax, disc, fee, n_sched, notes, c
             state['status'] = "Paid"
             save_to_db()
 
-    # 6. Confirm Schedule
     if ctx_id == "btn-confirm-schedule":
         state['status'] = "Scheduled"
         state['tech'] = sched_tech
@@ -606,17 +569,18 @@ def update_quote_logic(n_add, n_del, n_action, tax, disc, fee, n_sched, notes, c
         sched_modal_open = False
         toast = dbc.Toast("Job Scheduled!", header="Success", duration=2000, icon="success", style={"position": "fixed", "top": 10, "right": 10})
 
-    # 7. Render UI
     cart_rows = [dbc.Row([
         dbc.Col(item['name'], width=5),
-        dbc.Col(f"x{item['qty']}", width=2),
+        dbc.Col(dbc.Input(type="number", value=item['qty'], min=1, id={"type": "qty-input", "index": item['uuid']}, size="sm"), width=2),
         dbc.Col(f"${item['price']*item['qty']:.2f}", width=3),
         dbc.Col(dbc.Button("❌", id={"type": "btn-delete", "index": item['uuid']}, size="sm", color="link", className="text-danger p-0"), width=2, className="text-end"),
     ], className="border-bottom py-2 align-items-center") for item in state['items']]
 
-    # Dynamic Buttons
     status = state['status']
     btn_props = {"style": {"width": "100%", "marginBottom": "5px"}}
+    dl_btn = dbc.Button("Download PDF", id={"type": "action-btn", "index": "download"}, color="dark", outline=True, size="sm", className="mb-3 w-100")
+    
+    btns = []
     if status == "Draft":
         btns = [dbc.Button("Save Draft", id={"type": "action-btn", "index": "save"}, color="secondary", outline=True, **btn_props),
                 dbc.Button("Send to Customer", id={"type": "action-btn", "index": "send"}, color="primary", **btn_props)]
@@ -628,9 +592,10 @@ def update_quote_logic(n_add, n_del, n_action, tax, disc, fee, n_sched, notes, c
         btns = [dbc.Button("Complete & Invoice", id={"type": "action-btn", "index": "complete"}, color="success", **btn_props)]
     else:
         btns = [dbc.Button("Job Closed", disabled=True, color="secondary", **btn_props)]
+    btns.append(dl_btn)
 
     return (state, cart_rows, f"${total:,.2f}", f"Est. Margin: ${margin:,.2f}", 
-            JobStepper(status), btns, sched_modal_open, toast)
+            JobStepper(status), btns, sched_modal_open, toast, pdf_download, state['tax'])
 
 if __name__ == "__main__":
     app.run_server(debug=True, port=8050)
