@@ -1,6 +1,4 @@
 import os
-import time
-from datetime import datetime
 import dash
 from dash import dcc, html, Input, Output, State, dash_table, ctx
 import dash_bootstrap_components as dbc
@@ -8,7 +6,7 @@ import pandas as pd
 import requests
 
 # -------------------------------------------------------------------
-# Config & Utils
+# Config
 # -------------------------------------------------------------------
 API_BASE_URL = os.getenv("API_BASE_URL", "").rstrip("/")
 
@@ -16,9 +14,8 @@ def api_url(path: str) -> str:
     return f"{API_BASE_URL}{path}"
 
 # -------------------------------------------------------------------
-# Dash Instance
+# Dash App
 # -------------------------------------------------------------------
-# Using a "Minty" or "Teal" theme to match your screenshot
 external_stylesheets = [dbc.themes.MINTY, dbc.icons.BOOTSTRAP]
 
 dash_app = dash.Dash(
@@ -27,12 +24,11 @@ dash_app = dash.Dash(
     suppress_callback_exceptions=True,
     requests_pathname_prefix="/app/",
 )
-app = dash_app  # Expose for FastAPI
+app = dash_app
 
 # -------------------------------------------------------------------
-# Layout Components
+# Components
 # -------------------------------------------------------------------
-
 def kpi_card(title, value, subtitle, icon_class, color="success"):
     return dbc.Card(
         dbc.CardBody([
@@ -67,13 +63,13 @@ def navbar():
             ],
             fluid=True,
         ),
-        color="#20c997", # Teal color
+        color="#20c997",
         dark=True,
         className="mb-4 shadow-sm py-3",
     )
 
 # -------------------------------------------------------------------
-# Tab 1: CRM & Pipeline View
+# Views
 # -------------------------------------------------------------------
 def pipeline_view():
     return html.Div([
@@ -85,47 +81,7 @@ def pipeline_view():
             dbc.Col(kpi_card("Avg Margin", "54.2%", "On won jobs", "bi bi-percent"), md=3),
         ], className="mb-4"),
 
-        # Filters
-        dbc.Card([
-            dbc.CardBody([
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Estimator", className="small text-muted"),
-                        dbc.Select(
-                            id="filter-estimator",
-                            options=[{"label": "All Estimators", "value": "all"}],
-                            value="all",
-                            size="sm"
-                        )
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Label("Status", className="small text-muted"),
-                        dbc.Select(
-                            id="filter-status",
-                            options=[
-                                {"label": "All Status", "value": "all"},
-                                {"label": "Draft", "value": "draft"},
-                                {"label": "Sent", "value": "sent"},
-                                {"label": "Approved", "value": "approved"},
-                                {"label": "Won", "value": "won"},
-                            ],
-                            value="all",
-                            size="sm"
-                        )
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Label("Search", className="small text-muted"),
-                        dbc.Input(id="search-input", placeholder="Client or ID...", size="sm")
-                    ], md=3),
-                    dbc.Col([
-                         dbc.Label("Refresh", className="small text-muted d-block"),
-                         dbc.Button(html.I(className="bi bi-arrow-clockwise"), id="refresh-btn", color="light", size="sm")
-                    ], md=3)
-                ])
-            ])
-        ], className="mb-4 border-0 shadow-sm"),
-
-        # Table
+        # Table & Actions
         dbc.Card([
             dbc.CardHeader("Quotes List", className="bg-white border-bottom-0 fw-bold"),
             dbc.CardBody([
@@ -155,10 +111,10 @@ def pipeline_view():
             ], className="p-0")
         ], className="shadow-sm border-0 mb-4"),
 
-        # Notes Section (Hidden until row selected)
+        # Notes Section (Appears on selection)
         html.Div(id="notes-container", style={"display": "none"}, children=[
              dbc.Card([
-                dbc.CardHeader(id="notes-header", children="Notes", className="text-white fw-bold", style={"backgroundColor": "#f06595"}), # Pinkish red
+                dbc.CardHeader(id="notes-header", children="Notes", className="text-white fw-bold", style={"backgroundColor": "#f06595"}),
                 dbc.CardBody([
                     dbc.Row([
                         dbc.Col([
@@ -176,23 +132,17 @@ def pipeline_view():
         ])
     ])
 
-# -------------------------------------------------------------------
-# Tab 2: Quote Builder
-# -------------------------------------------------------------------
 def quote_builder_view():
     return html.Div([
         dbc.Row([
-            # Left Col: Details
             dbc.Col([
                 dbc.Card([
                     dbc.CardHeader("1. Customer & Job", className="bg-white fw-bold"),
                     dbc.CardBody([
                         dbc.Label("Customer Name"),
                         dbc.Input(id="qb-customer", placeholder="e.g. Burger King", className="mb-3"),
-                        
                         dbc.Label("Job Title"),
                         dbc.Input(id="qb-title", placeholder="e.g. Grease Trap Repair", className="mb-3"),
-
                         dbc.Row([
                             dbc.Col([dbc.Label("Status"), dbc.Select(id="qb-status", options=[
                                 {"label": "Draft", "value": "draft"},
@@ -204,37 +154,30 @@ def quote_builder_view():
                     ])
                 ], className="shadow-sm border-0 h-100")
             ], md=4),
-
-            # Middle Col: Line Items (Simplified for MVP)
             dbc.Col([
                 dbc.Card([
                     dbc.CardHeader("2. Line Items", className="bg-white fw-bold"),
                     dbc.CardBody([
-                        # Item 1
                         dbc.Row([
-                            dbc.Col(dbc.Input(id="item-1-desc", placeholder="Description (e.g. Labor)"), md=6),
+                            dbc.Col(dbc.Input(id="item-1-desc", placeholder="Description"), md=6),
                             dbc.Col(dbc.Input(id="item-1-qty", type="number", placeholder="Qty", value=1), md=2),
                             dbc.Col(dbc.Input(id="item-1-price", type="number", placeholder="Price", value=0), md=4),
                         ], className="mb-2"),
-                        # Item 2
                          dbc.Row([
-                            dbc.Col(dbc.Input(id="item-2-desc", placeholder="Description (e.g. Parts)"), md=6),
+                            dbc.Col(dbc.Input(id="item-2-desc", placeholder="Description"), md=6),
                             dbc.Col(dbc.Input(id="item-2-qty", type="number", placeholder="Qty", value=1), md=2),
                             dbc.Col(dbc.Input(id="item-2-price", type="number", placeholder="Price", value=0), md=4),
                         ], className="mb-2"),
-                        
                         html.Hr(),
                         html.H4(id="qb-total-display", className="text-end text-success", children="$0.00")
                     ])
                 ], className="shadow-sm border-0 h-100")
             ], md=5),
-
-            # Right Col: Actions
             dbc.Col([
                 dbc.Card([
                     dbc.CardHeader("3. Save", className="bg-white fw-bold"),
                     dbc.CardBody([
-                        dcc.Input(id="qb-quote-id", type="hidden"), # Hidden ID for updates
+                        dcc.Input(id="qb-quote-id", type="hidden"),
                         dbc.Button("Finalize & Save", id="btn-save-quote", color="success", className="w-100 py-3 fw-bold fs-5"),
                         html.Div(id="qb-save-msg", className="mt-2 text-center small")
                     ])
@@ -243,12 +186,11 @@ def quote_builder_view():
         ])
     ])
 
-
 # -------------------------------------------------------------------
-# Main Layout
+# Layout & Callbacks
 # -------------------------------------------------------------------
 dash_app.layout = html.Div([
-    dcc.Store(id="quotes-store"), # Raw data
+    dcc.Store(id="quotes-store"),
     dcc.Interval(id="auto-refresh", interval=30*1000, n_intervals=0),
     navbar(),
     dbc.Container([
@@ -259,17 +201,11 @@ dash_app.layout = html.Div([
     ], fluid=True)
 ], style={"backgroundColor": "#f4f6f9", "minHeight": "100vh"})
 
-
-# -------------------------------------------------------------------
-# Callbacks
-# -------------------------------------------------------------------
-
-# 1. Load Data
 @dash_app.callback(
     Output("quotes-store", "data"),
-    [Input("auto-refresh", "n_intervals"), Input("refresh-btn", "n_clicks"), Input("main-tabs", "active_tab")],
+    [Input("auto-refresh", "n_intervals"), Input("main-tabs", "active_tab")],
 )
-def load_data(_n, _btn, _tab):
+def load_data(_n, _tab):
     try:
         resp = requests.get(api_url("/quotes"), timeout=4)
         if resp.status_code == 200:
@@ -278,57 +214,41 @@ def load_data(_n, _btn, _tab):
         pass
     return []
 
-# 2. Populate Table
 @dash_app.callback(
     Output("quotes-table", "data"),
     Input("quotes-store", "data")
 )
 def update_table(data):
     if not data: return []
-    # formatting for display
     df = pd.DataFrame(data)
     if "created_at" in df.columns:
         df["created_at"] = df["created_at"].astype(str).str.slice(0, 10)
     return df.to_dict("records")
 
-# 3. Handle Selection (Enable Buttons & Show Notes)
 @dash_app.callback(
-    [
-        Output("btn-edit-quote", "disabled"),
-        Output("btn-mark-won", "disabled"),
-        Output("notes-container", "style"),
-        Output("notes-header", "children"),
-        Output("notes-history", "children"),
-    ],
-    [
-        Input("quotes-table", "selected_rows"),
-        Input("btn-add-note", "n_clicks")
-    ],
-    [
-        State("quotes-table", "data"),
-        State("new-note-input", "value")
-    ]
+    [Output("btn-edit-quote", "disabled"), Output("btn-mark-won", "disabled"),
+     Output("notes-container", "style"), Output("notes-header", "children"),
+     Output("notes-history", "children"), Output("new-note-input", "value")],
+    [Input("quotes-table", "selected_rows"), Input("btn-add-note", "n_clicks")],
+    [State("quotes-table", "data"), State("new-note-input", "value")]
 )
 def handle_selection(selected_rows, add_note_click, table_data, new_note_text):
     trigger = ctx.triggered_id
-    
-    # Check if a row is selected
     if not selected_rows:
-        return True, True, {"display": "none"}, "Notes", []
+        return True, True, {"display": "none"}, "Notes", [], ""
 
     row_idx = selected_rows[0]
     row = table_data[row_idx]
     quote_id = row["id"]
     customer = row.get("customer_name", "Unknown")
 
-    # Handle Note Addition
     if trigger == "btn-add-note" and new_note_text:
         try:
             requests.post(api_url(f"/quotes/{quote_id}/notes"), json={"content": new_note_text, "author": "Elliott"})
+            new_note_text = "" # Clear input on success
         except:
             pass
     
-    # Fetch Notes
     notes_display = []
     try:
         resp = requests.get(api_url(f"/quotes/{quote_id}/notes"))
@@ -341,14 +261,15 @@ def handle_selection(selected_rows, add_note_click, table_data, new_note_text):
                         html.Div(n['content'], className="ms-2")
                     ], className="mb-2 border-bottom pb-1")
                 )
+        else:
+            notes_display = [html.Div("No notes yet.")]
     except:
         notes_display = [html.Div("Error loading notes.")]
 
-    return False, False, {"display": "block"}, f"Notes: {customer} (#{quote_id[:8]})", notes_display
+    return False, False, {"display": "block"}, f"Notes: {customer}", notes_display, new_note_text
 
-# 4. Mark Won
 @dash_app.callback(
-    Output("refresh-btn", "n_clicks"), # Trigger refresh
+    Output("quotes-store", "data", allow_duplicate=True),
     Input("btn-mark-won", "n_clicks"),
     State("quotes-table", "selected_rows"),
     State("quotes-table", "data"),
@@ -358,24 +279,11 @@ def mark_won(n_clicks, selected, data):
     if not selected: return dash.no_update
     row = data[selected[0]]
     requests.put(api_url(f"/quotes/{row['id']}"), json={"status": "won"})
-    return (n_clicks or 0) + 1
+    return requests.get(api_url("/quotes")).json() # Refresh store
 
-# 5. Edit Quote (Switch Tab & Populate)
 @dash_app.callback(
-    [
-        Output("main-tabs", "active_tab"),
-        Output("qb-quote-id", "value"),
-        Output("qb-customer", "value"),
-        Output("qb-title", "value"),
-        Output("qb-status", "value"),
-        # Items (simple mapping for 2 items)
-        Output("item-1-desc", "value"),
-        Output("item-1-qty", "value"),
-        Output("item-1-price", "value"),
-        Output("item-2-desc", "value"),
-        Output("item-2-qty", "value"),
-        Output("item-2-price", "value"),
-    ],
+    [Output("main-tabs", "active_tab"), Output("qb-quote-id", "value"),
+     Output("qb-customer", "value"), Output("qb-title", "value"), Output("qb-status", "value")],
     Input("btn-edit-quote", "n_clicks"),
     State("quotes-table", "selected_rows"),
     State("quotes-table", "data"),
@@ -384,61 +292,41 @@ def mark_won(n_clicks, selected, data):
 def edit_quote(n_clicks, selected, data):
     if not selected: return dash.no_update
     row = data[selected[0]]
-    
-    # We would need to fetch full details here in a real app to get line items
-    # For now, we pre-fill main details and leave items blank/default
-    return "tab-builder", row["id"], row["customer_name"], row.get("title", ""), row["status"], \
-           None, 1, 0, None, 1, 0
+    return "tab-builder", row["id"], row.get("customer_name", ""), row.get("title", ""), row.get("status", "draft")
 
-# 6. Save Quote
 @dash_app.callback(
-    Output("qb-save-msg", "children"),
+    [Output("qb-save-msg", "children"), Output("quotes-store", "data", allow_duplicate=True)],
     Input("btn-save-quote", "n_clicks"),
-    [
-        State("qb-quote-id", "value"),
-        State("qb-customer", "value"),
-        State("qb-title", "value"),
-        State("qb-status", "value"),
-        State("item-1-desc", "value"),
-        State("item-1-qty", "value"),
-        State("item-1-price", "value"),
-        State("item-2-desc", "value"),
-        State("item-2-qty", "value"),
-        State("item-2-price", "value"),
-    ],
+    [State("qb-quote-id", "value"), State("qb-customer", "value"),
+     State("qb-title", "value"), State("qb-status", "value"),
+     State("item-1-desc", "value"), State("item-1-qty", "value"), State("item-1-price", "value"),
+     State("item-2-desc", "value"), State("item-2-qty", "value"), State("item-2-price", "value")],
     prevent_initial_call=True
 )
 def save_quote_builder(n_clicks, q_id, cust, title, status, i1d, i1q, i1p, i2d, i2q, i2p):
-    # Construct Payload
     items = []
     if i1d: items.append({"description": i1d, "qty": float(i1q or 0), "unit_price": float(i1p or 0)})
     if i2d: items.append({"description": i2d, "qty": float(i2q or 0), "unit_price": float(i2p or 0)})
     
     payload = {
-        "customer_id": "cust-demo", # Hardcoded for demo
+        "customer_id": "cust-demo",
         "location_id": "loc-demo",
-        "title": title or "Untitled Job",
+        "title": title or "New Job",
         "line_items": items,
         "status": status
     }
-
-    # Hack: Add customer name to schemas if we were doing this properly
-    # For now, we rely on the API defaults
     
     try:
         if q_id:
-            # Update
             requests.put(api_url(f"/quotes/{q_id}"), json=payload)
-            return dbc.Alert("Quote Updated!", color="success")
+            msg = dbc.Alert("Updated!", color="success")
         else:
-            # Create
-            payload["customer_id"] = "cust-demo" # Required by schema
             requests.post(api_url("/quotes"), json=payload)
-            return dbc.Alert("Quote Created!", color="success")
+            msg = dbc.Alert("Created!", color="success")
+        return msg, requests.get(api_url("/quotes")).json()
     except Exception as e:
-        return dbc.Alert(f"Error: {str(e)}", color="danger")
+        return dbc.Alert(f"Error: {str(e)}", color="danger"), dash.no_update
 
-# 7. Calc Total in Builder
 @dash_app.callback(
     Output("qb-total-display", "children"),
     [Input("item-1-qty", "value"), Input("item-1-price", "value"),
