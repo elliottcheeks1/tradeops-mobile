@@ -61,20 +61,43 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.
 app.title = "TradeOps Field"
 server = app.server
 
+# --- FIX: Inject CSS via Index String instead of Component ---
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+''' + custom_css + '''
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+
 # =========================================================
-#   2. MOCK DATA GENERATOR (Expanded for Charts)
+#   2. MOCK DATA GENERATOR
 # =========================================================
 def generate_mock_data():
     techs = ["Elliott", "Sarah", "Mike", "John"]
     statuses = ["Draft", "Sent", "Approved", "Scheduled", "Invoiced", "Paid"]
     
-    # Generate Quotes
     quotes = []
     for i in range(1001, 1050):
         created_date = date.today() - timedelta(days=random.randint(0, 60))
         status = random.choice(statuses)
         total = random.randint(200, 8500)
-        cost = total * random.uniform(0.4, 0.6) # 40-60% cost
+        cost = total * random.uniform(0.4, 0.6)
         
         quotes.append({
             "id": f"Q-{i}",
@@ -85,7 +108,7 @@ def generate_mock_data():
             "total": total,
             "cost": int(cost),
             "margin": int(total - cost),
-            "items": [] # Simplified for aggregate data
+            "items": [] 
         })
     return pd.DataFrame(quotes)
 
@@ -98,7 +121,7 @@ def create_pdf(quote_data):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 20)
-    pdf.set_text_color(38, 101, 235) # Brand Blue
+    pdf.set_text_color(38, 101, 235) 
     pdf.cell(0, 10, "TradeOps Field", ln=True)
     
     pdf.set_font("Arial", "", 10)
@@ -106,7 +129,6 @@ def create_pdf(quote_data):
     pdf.cell(0, 10, f"Quote #{quote_data['id']} | Date: {date.today()}", ln=True)
     pdf.ln(10)
     
-    # Line Items Header
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", "B", 10)
     pdf.set_text_color(0, 0, 0)
@@ -114,7 +136,6 @@ def create_pdf(quote_data):
     pdf.cell(30, 10, "Qty", 1, 0, 'C', 1)
     pdf.cell(60, 10, "Price", 1, 1, 'R', 1)
     
-    # Items
     pdf.set_font("Arial", "", 10)
     for item in quote_data.get('items', []):
         pdf.cell(100, 10, item['desc'], 1)
@@ -167,8 +188,6 @@ def KPICard(title, value, subtext, icon, trend="up"):
 
 def JobStepper(status):
     steps = ["Draft", "Sent", "Approved", "Scheduled", "Invoiced", "Paid"]
-    
-    # Determine current index
     try:
         curr_idx = steps.index(status)
     except ValueError:
@@ -197,7 +216,6 @@ def JobStepper(status):
 #   5. VIEW: DASHBOARD
 # =========================================================
 def DashboardView():
-    # Calc logic
     total_rev = df_quotes['total'].sum()
     monthly_rev = df_quotes[df_quotes['created_at'] >= (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")]['total'].sum()
     open_est = len(df_quotes[df_quotes['status'].isin(['Draft', 'Sent'])])
@@ -234,13 +252,11 @@ def DashboardView():
         ], className="mb-4"),
         
         dbc.Row([
-            # Chart
             dbc.Col(html.Div([
                 html.H5("Revenue Trend", className="fw-bold mb-3"),
                 dcc.Graph(figure=fig_trend, config={'displayModeBar': False})
             ], className="saas-card h-100"), md=8),
             
-            # Leaderboard
             dbc.Col(html.Div([
                 html.H5("Top Technicians", className="fw-bold mb-3"),
                 dash_table.DataTable(
@@ -255,7 +271,7 @@ def DashboardView():
     ])
 
 # =========================================================
-#   6. VIEW: QUOTE BUILDER (Split Screen)
+#   6. VIEW: QUOTE BUILDER
 # =========================================================
 def QuoteBuilderView():
     return html.Div([
@@ -268,7 +284,6 @@ def QuoteBuilderView():
         ]),
         
         dbc.Row([
-            # LEFT COLUMN: Customer & Actions
             dbc.Col([
                 html.Div([
                     html.H5("Customer Details", className="fw-bold mb-3"),
@@ -283,34 +298,23 @@ def QuoteBuilderView():
                         html.P([html.I(className="bi bi-envelope me-2 text-primary"), "client@email.com"]),
                         html.P([html.I(className="bi bi-telephone me-2 text-primary"), "(555) 123-4567"]),
                     ], className="bg-light p-3 rounded mb-4"),
-                    
                     html.Hr(),
-                    
                     html.H5("Actions", className="fw-bold mb-3"),
                     html.Div(id="action-buttons")
-                    
                 ], className="saas-card h-100")
             ], md=4),
             
-            # RIGHT COLUMN: Cart
             dbc.Col([
                 html.Div([
                     html.H5("Line Items", className="fw-bold mb-3"),
-                    
-                    # Add Item Row
                     dbc.Row([
-                        dbc.Col(dbc.Input(id="new-item-desc", placeholder="Description (e.g., Service Call)"), md=6),
+                        dbc.Col(dbc.Input(id="new-item-desc", placeholder="Description"), md=6),
                         dbc.Col(dbc.Input(id="new-item-qty", type="number", value=1), md=2),
                         dbc.Col(dbc.Input(id="new-item-price", type="number", placeholder="Price"), md=3),
                         dbc.Col(dbc.Button(html.I(className="bi bi-plus"), id="btn-add-item", color="primary"), md=1),
                     ], className="mb-3 g-2"),
-                    
-                    # Items Table
                     html.Div(id="cart-items-container", style={"minHeight": "200px"}),
-                    
                     html.Hr(),
-                    
-                    # Totals
                     dbc.Row([
                         dbc.Col(html.H4("Total Estimate", className="text-muted"), width=6),
                         dbc.Col(html.H2(id="cart-total-display", className="fw-bold text-end", style={"color": THEME['success']}), width=6),
@@ -318,7 +322,6 @@ def QuoteBuilderView():
                     dbc.Row([
                          dbc.Col(html.Small(id="margin-display", className="text-muted float-end"))
                     ])
-                    
                 ], className="saas-card h-100")
             ], md=8),
         ])
@@ -328,14 +331,11 @@ def QuoteBuilderView():
 #   7. VIEW: SMART SCHEDULER
 # =========================================================
 def ScheduleView():
-    # Filter for 'Scheduled' jobs from mock data
     df_sched = df_quotes[df_quotes['status'] == 'Scheduled'].head(10)
     
     return html.Div([
         html.H2("Dispatch Board", className="fw-bold mb-4"),
-        
         dbc.Row([
-            # Dispatch List
             dbc.Col([
                 html.Div([
                     dbc.Row([
@@ -359,11 +359,9 @@ def ScheduleView():
                             ])
                         ], className="mb-2 shadow-sm border-0") for i, row in df_sched.iterrows()
                     ])
-                    
                 ], className="saas-card")
             ], md=4),
             
-            # Gantt / Timeline placeholder (Plotly)
             dbc.Col([
                 html.Div([
                     html.H5("Technician Schedule", className="fw-bold mb-3"),
@@ -380,20 +378,14 @@ def ScheduleView():
     ])
 
 # =========================================================
-#   8. MAIN LAYOUT
+#   8. MAIN LAYOUT & CALLBACKS
 # =========================================================
 app.layout = html.Div([
     dcc.Location(id="url"),
-    html.Style(custom_css),
     Sidebar(),
     html.Div(id="page-content", className="content")
 ])
 
-# =========================================================
-#   9. CALLBACKS
-# =========================================================
-
-# Routing
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def render_page(pathname):
     if pathname == "/" or pathname == "/dashboard":
@@ -404,7 +396,6 @@ def render_page(pathname):
         return ScheduleView()
     return DashboardView()
 
-# Quote Logic (Add Item, Update State, Generate PDF)
 @app.callback(
     [Output("quote-state", "data"),
      Output("cart-items-container", "children"),
@@ -423,31 +414,25 @@ def render_page(pathname):
 def manage_quote(n_add, n_action, desc, qty, price, state):
     ctx_id = ctx.triggered_id
     
-    # 1. Handle Add Item
     if ctx_id == "btn-add-item" and desc and price:
         new_item = {"desc": desc, "qty": float(qty or 1), "price": float(price)}
         state["items"].append(new_item)
         
-    # 2. Handle Workflow Transitions
     pdf_download = None
     if isinstance(ctx_id, dict) and ctx_id.get("type") == "action-btn":
         action = ctx_id['index']
         if action == "send":
             state['status'] = "Sent"
-            # Trigger PDF
             pdf_bytes = create_pdf(state)
             pdf_download = dcc.send_bytes(pdf_bytes, f"Quote_{state['id']}.pdf")
-            
         elif action == "approve": state['status'] = "Approved"
         elif action == "schedule": state['status'] = "Scheduled"
         elif action == "complete": state['status'] = "Paid"
 
-    # 3. Recalc Totals
     total = sum(i['qty'] * i['price'] for i in state['items'])
     state['total'] = total
-    margin = total * 0.55 # Mock margin logic
+    margin = total * 0.55
     
-    # 4. Render Cart HTML
     cart_html = [
         dbc.Row([
             dbc.Col(html.Span(i['desc']), width=6),
@@ -456,7 +441,6 @@ def manage_quote(n_add, n_action, desc, qty, price, state):
         ], className="border-bottom py-2") for i in state['items']
     ]
     
-    # 5. Render Actions based on State
     status = state['status']
     btn_style = {"width": "100%", "marginBottom": "10px"}
     
