@@ -1,98 +1,410 @@
 import dash
 from dash import dcc, html, Input, Output, State, dash_table, ctx
 import dash_bootstrap_components as dbc
-import tradeops_v3_db as db
 from fpdf import FPDF
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+import pandas as pd
 import re
-import os
 
-# FORCE DB INIT ON STARTUP
-db.init_db()
+# =========================================================
+#  MOCK DATA LAYER (IN-MEMORY ONLY)
+# =========================================================
+
+# Customers
+MOCK_CUSTOMERS = [
+    {
+        "customer_id": "CUST-1001",
+        "name": "Brenda Caulfield",
+        "street": "123 Maple St",
+        "city": "Houston",
+        "state": "TX",
+        "zip": "77001",
+        "phone": "555-0101",
+    },
+    {
+        "customer_id": "CUST-1002",
+        "name": "Kevin Parker",
+        "street": "421 Pine Dr",
+        "city": "Katy",
+        "state": "TX",
+        "zip": "77450",
+        "phone": "555-0102",
+    },
+    {
+        "customer_id": "CUST-1003",
+        "name": "High Point Creamery",
+        "street": "88 Dairy Ln",
+        "city": "Cypress",
+        "state": "TX",
+        "zip": "77429",
+        "phone": "555-0103",
+    },
+    {
+        "customer_id": "CUST-1004",
+        "name": "Johnathan Riley",
+        "street": "600 Oak Blvd",
+        "city": "Spring",
+        "state": "TX",
+        "zip": "77373",
+        "phone": "555-0104",
+    },
+]
+
+# Parts catalog
+MOCK_PARTS = [
+    {"part_id": "P1", "name": "16 SEER AC Condenser", "cost": 1200.0, "retail_price": 2800.0},
+    {"part_id": "P2", "name": "Evaporator Coil", "cost": 450.0, "retail_price": 1150.0},
+    {"part_id": "P3", "name": "Smart Thermostat", "cost": 90.0, "retail_price": 325.0},
+    {"part_id": "P4", "name": "Panel Upgrade 200A", "cost": 750.0, "retail_price": 1950.0},
+    {"part_id": "P5", "name": "Drain Cleaning (per line)", "cost": 30.0, "retail_price": 189.0},
+]
+
+# Labor catalog
+MOCK_LABOR = [
+    {"role": "Apprentice", "base_cost": 20.0, "bill_rate": 75.0},
+    {"role": "Journeyman", "base_cost": 35.0, "bill_rate": 115.0},
+    {"role": "Master Tech", "base_cost": 55.0, "bill_rate": 155.0},
+]
+
+# Quotes + Quote items
+MOCK_QUOTES = [
+    {
+        "quote_id": "Q-1001",
+        "customer_id": "CUST-1001",
+        "job_type": "Install",
+        "estimator": "Elliott",
+        "status": "Open",
+        "created_at": "2025-01-03",
+        "total_price": 5650.0,
+        "total_cost": 3400.0,
+    },
+    {
+        "quote_id": "Q-1002",
+        "customer_id": "CUST-1002",
+        "job_type": "Service",
+        "estimator": "Elliott",
+        "status": "Won",
+        "created_at": "2025-01-05",
+        "total_price": 420.0,
+        "total_cost": 150.0,
+    },
+]
+
+MOCK_QUOTE_ITEMS = [
+    {
+        "quote_id": "Q-1001",
+        "item_name": "16 SEER AC Condenser",
+        "item_type": "Part",
+        "unit_cost": 1200.0,
+        "unit_price": 2800.0,
+        "quantity": 1,
+    },
+    {
+        "quote_id": "Q-1001",
+        "item_name": "Evaporator Coil",
+        "item_type": "Part",
+        "unit_cost": 450.0,
+        "unit_price": 1150.0,
+        "quantity": 1,
+    },
+    {
+        "quote_id": "Q-1001",
+        "item_name": "Master Tech Labor",
+        "item_type": "Labor",
+        "unit_cost": 55.0,
+        "unit_price": 155.0,
+        "quantity": 8,
+    },
+    {
+        "quote_id": "Q-1002",
+        "item_name": "Drain Cleaning (per line)",
+        "item_type": "Part",
+        "unit_cost": 30.0,
+        "unit_price": 189.0,
+        "quantity": 1,
+    },
+    {
+        "quote_id": "Q-1002",
+        "item_name": "Journeyman Labor",
+        "item_type": "Labor",
+        "unit_cost": 35.0,
+        "unit_price": 115.0,
+        "quantity": 2,
+    },
+]
+
+# Follow-up queue
+MOCK_FOLLOWUPS = [
+    {
+        "quote_id": "Q-1001",
+        "name": "Brenda Caulfield",
+        "phone": "555-0101",
+        "total_price": 5650.0,
+        "next_followup_date": (date.today() + timedelta(days=1)).strftime("%Y-%m-%d"),
+        "followup_status": "Needs Call",
+        "estimator": "Elliott",
+    }
+]
+
+
+# ---------- Helper functions over mock data ----------
+
+def get_customers_df():
+    return pd.DataFrame(MOCK_CUSTOMERS)
+
+
+def get_parts_df():
+    return pd.DataFrame(MOCK_PARTS)
+
+
+def get_labor_df():
+    return pd.DataFrame(MOCK_LABOR)
+
+
+def _quotes_df():
+    return pd.DataFrame(MOCK_QUOTES)
+
+
+def _quote_items_df():
+    return pd.DataFrame(MOCK_QUOTE_ITEMS)
+
+
+def _followups_df():
+    return pd.DataFrame(MOCK_FOLLOWUPS)
+
+
+def get_quote_history(estimator_name=None):
+    q = _quotes_df()
+    c = get_customers_df()[["customer_id", "name"]]
+    df = q.merge(c, on="customer_id", how="left")
+    if estimator_name:
+        df = df[df["estimator"].str.contains(estimator_name, case=False, na=False)]
+    df = df.sort_values("created_at", ascending=False)
+    return df
+
+
+def get_followup_queue():
+    return _followups_df().sort_values("next_followup_date")
+
+
+def get_quote_details(quote_id):
+    q = _quotes_df()
+    qi = _quote_items_df()
+    header = q[q["quote_id"] == quote_id].iloc[0]
+    items = qi[qi["quote_id"] == quote_id].copy()
+    return header, items
+
+
+def _new_quote_id():
+    existing = [int(q["quote_id"].split("-")[1]) for q in MOCK_QUOTES]
+    next_num = max(existing + [1000]) + 1
+    return f"Q-{next_num}"
+
+
+def save_new_quote(cust_id, job_type, estimator, items):
+    """Create a new quote + items + follow-up."""
+    global MOCK_QUOTES, MOCK_QUOTE_ITEMS, MOCK_FOLLOWUPS
+
+    if not items:
+        return None
+
+    qid = _new_quote_id()
+    created = datetime.now().strftime("%Y-%m-%d")
+
+    total_cost = sum(i["cost"] * i["qty"] for i in items)
+    total_price = sum(i["price"] * i["qty"] for i in items)
+
+    MOCK_QUOTES.append(
+        {
+            "quote_id": qid,
+            "customer_id": cust_id,
+            "job_type": job_type,
+            "estimator": estimator,
+            "status": "Open",
+            "created_at": created,
+            "total_price": total_price,
+            "total_cost": total_cost,
+        }
+    )
+
+    for i in items:
+        MOCK_QUOTE_ITEMS.append(
+            {
+                "quote_id": qid,
+                "item_name": i["name"],
+                "item_type": i["type"],
+                "unit_cost": i["cost"],
+                "unit_price": i["price"],
+                "quantity": i["qty"],
+            }
+        )
+
+    # Add follow-up record
+    cust = get_customers_df()
+    cname = cust[cust["customer_id"] == cust_id]["name"].values[0]
+    MOCK_FOLLOWUPS.append(
+        {
+            "quote_id": qid,
+            "name": cname,
+            "phone": cust[cust["customer_id"] == cust_id]["phone"].values[0],
+            "total_price": total_price,
+            "next_followup_date": (date.today() + timedelta(days=2)).strftime(
+                "%Y-%m-%d"
+            ),
+            "followup_status": "Needs Call",
+            "estimator": estimator,
+        }
+    )
+    return qid
+
+
+def update_existing_quote(quote_id, cust_id, job_type, estimator, items):
+    """Update an existing quote totals + items."""
+    global MOCK_QUOTES, MOCK_QUOTE_ITEMS
+
+    total_cost = sum(i["cost"] * i["qty"] for i in items)
+    total_price = sum(i["price"] * i["qty"] for i in items)
+
+    # Update quote header
+    for q in MOCK_QUOTES:
+        if q["quote_id"] == quote_id:
+            q["customer_id"] = cust_id
+            q["job_type"] = job_type
+            q["estimator"] = estimator
+            q["total_price"] = total_price
+            q["total_cost"] = total_cost
+            break
+
+    # Replace items
+    MOCK_QUOTE_ITEMS = [qi for qi in MOCK_QUOTE_ITEMS if qi["quote_id"] != quote_id]
+    for i in items:
+        MOCK_QUOTE_ITEMS.append(
+            {
+                "quote_id": quote_id,
+                "item_name": i["name"],
+                "item_type": i["type"],
+                "unit_cost": i["cost"],
+                "unit_price": i["price"],
+                "quantity": i["qty"],
+            }
+        )
+
+
+def log_interaction(quote_id, new_status, next_date):
+    global MOCK_FOLLOWUPS, MOCK_QUOTES
+    for f in MOCK_FOLLOWUPS:
+        if f["quote_id"] == quote_id:
+            f["followup_status"] = new_status
+            f["next_followup_date"] = next_date
+    for q in MOCK_QUOTES:
+        if q["quote_id"] == quote_id:
+            q["status"] = new_status
+
+
+# =========================================================
+#  DASH APP SETUP
+# =========================================================
 
 app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.ZEPHYR, dbc.icons.BOOTSTRAP],
-    meta_tags=[{'name': 'viewport', 'content': 'width=device-width, initial-scale=1.0'}]
+    external_stylesheets=[dbc.themes.FLATLY, dbc.icons.BOOTSTRAP],
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
-app.title = "TradeOps Field V7"
+app.title = "TradeOps Field • Tech Console"
 server = app.server
 
+
 # =========================================================
-# PDF ENGINE
+#  PDF ENGINE
 # =========================================================
+
 def generate_pdf(quote_id, customer_name, items, total):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 18)
-    pdf.cell(0, 10, "TradeOps Services", ln=True, align='C')
-
-    pdf.set_font("Arial", size=10)
-    pdf.cell(0, 8, "123 Main St, Texas City, TX  |  (555) 555-0199", ln=True, align='C')
-    pdf.cell(0, 8, "support@tradeops.com", ln=True, align='C')
-    pdf.ln(5)
-    pdf.set_draw_color(200, 200, 200)
+    pdf.set_title("TradeOps Field Quote")
+    pdf.set_font("Arial", "B", 18)
+    pdf.cell(0, 10, "TradeOps Services", ln=True, align="C")
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 6, "123 Main St, Texas City, TX  |  (555) 555-0100", ln=True, align="C")
+    pdf.ln(4)
+    pdf.set_draw_color(220, 220, 220)
     pdf.line(10, 30, 200, 30)
-    pdf.ln(10)
+    pdf.ln(8)
 
-    date_str = datetime.now().strftime('%Y-%m-%d')
-    pdf.set_font("Arial", 'B', 12)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 8, f"Quote #: {quote_id}", ln=True)
     pdf.cell(0, 8, f"Customer: {customer_name}", ln=True)
     pdf.cell(0, 8, f"Date: {date_str}", ln=True)
-    pdf.ln(5)
+    pdf.ln(8)
 
-    # Table header
-    pdf.set_font("Arial", 'B', 11)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(100, 8, "Description", 1, 0, 'L', 1)
-    pdf.cell(30, 8, "Qty", 1, 0, 'C', 1)
-    pdf.cell(50, 8, "Price", 1, 1, 'R', 1)
+    pdf.set_fill_color(246, 248, 250)
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(100, 8, "Description", 1, 0, "L", True)
+    pdf.cell(30, 8, "Qty", 1, 0, "C", True)
+    pdf.cell(50, 8, "Price", 1, 1, "R", True)
 
-    pdf.set_font("Arial", size=10)
-    pdf.set_fill_color(250, 250, 250)
-    fill = False
+    pdf.set_font("Arial", "", 10)
     for item in items:
-        pdf.cell(100, 8, str(item['name'])[:55], 1, 0, 'L', fill)
-        pdf.cell(30, 8, str(item['qty']), 1, 0, 'C', fill)
-        pdf.cell(50, 8, f"${item['price']:.2f}", 1, 1, 'R', fill)
-        fill = not fill
+        pdf.cell(100, 8, str(item["name"]), 1)
+        pdf.cell(30, 8, str(item["qty"]), 1, 0, "C")
+        pdf.cell(50, 8, f"${item['price']:.2f}", 1, 1, "R")
 
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(130, 8, "Total Estimate:", 0, 0, 'R')
-    pdf.cell(50, 8, f"${total:,.2f}", 0, 1, 'R')
+    pdf.ln(4)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(130, 8, "Total Estimate:", 0, 0, "R")
+    pdf.cell(50, 8, f"${total:,.2f}", 0, 1, "R")
 
-    pdf.ln(15)
-    pdf.set_font("Arial", 'I', 9)
+    pdf.ln(12)
+    pdf.set_font("Arial", "I", 9)
     pdf.multi_cell(
         0,
         5,
-        "This estimate is valid for 30 days from the date shown above. "
-        "Pricing may change if additional work or materials are required.\n\n"
-        "Thank you for choosing TradeOps."
+        "This quote is an estimate only and is valid for 30 days. "
+        "Final pricing may change based on site conditions. "
+        "Signature is required before any work can begin.",
     )
 
-    clean_name = re.sub(r'[^a-zA-Z0-9]', '', customer_name or "Customer")
+    clean_name = re.sub(r"[^a-zA-Z0-9]", "", customer_name) or "Customer"
     filename = f"Quote_{clean_name}_{date_str}.pdf"
     pdf.output(filename)
     return filename
 
+
 # =========================================================
-# LAYOUTS
+#  UI COMPONENTS
 # =========================================================
 
-# 1. FOLLOW-UP QUEUE TAB
+def kpi_card(id_value, label, icon_class):
+    return dbc.Col(
+        dbc.Card(
+            [
+                dbc.CardBody(
+                    [
+                        html.Div(
+                            [
+                                html.I(className=f"{icon_class} me-2 text-primary"),
+                                html.Small(label.upper()),
+                            ],
+                            className="text-muted",
+                        ),
+                        html.H3(id=id_value, className="mt-2 mb-0 fw-bold"),
+                    ]
+                )
+            ],
+            className="shadow-sm border-0 h-100",
+        ),
+        md=3,
+        xs=6,
+        className="mb-3",
+    )
+
+
+# FOLLOW-UP TAB
 followup_tab = dbc.Container(
     [
-        html.Div(
-            [
-                html.H4("📞 Follow-Up Queue", className="mt-3 mb-1 text-primary"),
-                html.Small("Stay on top of open quotes that still need a call-back.", className="text-muted"),
-            ]
-        ),
-        html.Hr(),
-        dbc.Button("↻ Refresh", id="btn-refresh-fup", color="outline-secondary", size="sm", className="mb-2"),
+        html.H4("📞 Follow-Up Queue", className="mt-3 mb-3"),
         dash_table.DataTable(
             id="fup-table",
             columns=[
@@ -101,26 +413,35 @@ followup_tab = dbc.Container(
                 {"name": "Status", "id": "followup_status"},
                 {"name": "Due", "id": "next_followup_date"},
             ],
-            row_selectable='single',
-            style_cell={'textAlign': 'left', 'padding': '8px', 'fontSize': 14},
-            style_header={
-                'fontWeight': 'bold',
-                'backgroundColor': '#f1f3f4',
-                'border': '1px solid #dee2e6'
-            },
-            style_data_conditional=[
-                {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
+            row_selectable="single",
+            style_cell={"textAlign": "left", "padding": "8px"},
+            style_header={"fontWeight": "bold", "backgroundColor": "#f6f8fa"},
+            page_size=8,
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    dbc.Button(
+                        "Log Call / Update",
+                        id="btn-open-log",
+                        color="primary",
+                        className="mt-3 w-100",
+                        disabled=True,
+                    ),
+                    md=4,
+                ),
+                dbc.Col(
+                    dbc.Button(
+                        "Refresh",
+                        id="btn-refresh-fup",
+                        color="light",
+                        className="mt-3 w-100",
+                    ),
+                    md=2,
+                ),
             ],
-            page_size=10
+            className="mt-2",
         ),
-        dbc.Button(
-            "Log Call / Update",
-            id="btn-open-log",
-            color="primary",
-            className="mt-3 w-100",
-            disabled=True,
-        ),
-
         # Log Interaction Modal
         dbc.Modal(
             [
@@ -137,78 +458,91 @@ followup_tab = dbc.Container(
                                 {"label": "Lost / Not Interested", "value": "Lost"},
                             ],
                             value="Needs Call",
-                            className="mb-3",
                         ),
+                        html.Br(),
                         dbc.Label("Next Follow-Up Date"),
                         dcc.DatePickerSingle(
                             id="log-date",
-                            date=(datetime.now() + timedelta(days=2)).date(),
-                            display_format='YYYY-MM-DD',
+                            date=(date.today() + timedelta(days=2)),
+                            display_format="YYYY-MM-DD",
                         ),
                         html.Br(),
                         html.Br(),
-                        dbc.Button("Save & Update", id="btn-save-log", color="success", className="w-100 mb-2"),
-                        html.Div(id="log-msg", className="small"),
+                        dbc.Button(
+                            "Save & Update",
+                            id="btn-save-log",
+                            color="success",
+                            className="w-100",
+                        ),
                     ]
                 ),
             ],
             id="modal-log",
             is_open=False,
             centered=True,
-            backdrop=True,
         ),
     ],
     fluid=True,
 )
 
-# 2. HISTORY TAB
+# HISTORY TAB
 history_tab = dbc.Container(
     [
-        html.Div(
-            [
-                html.H4("📂 Quote History", className="mt-3 mb-1 text-primary"),
-                html.Small("Search and reuse previous estimates.", className="text-muted"),
-            ]
-        ),
-        html.Hr(),
+        html.H4("📂 Quote History", className="mt-3"),
         dbc.Row(
             [
                 dbc.Col(
                     dbc.Input(
                         id="hist-filter-input",
-                        placeholder="Filter by Estimator Name…",
+                        placeholder="Filter by estimator name...",
                         type="text",
                     ),
-                    width=8,
+                    md=6,
                 ),
                 dbc.Col(
-                    dbc.Button("Filter", id="btn-filter-hist", color="secondary", className="w-100"),
-                    width=4,
+                    dbc.Button(
+                        "Filter",
+                        id="btn-filter-hist",
+                        color="secondary",
+                        className="w-100",
+                    ),
+                    md=2,
+                ),
+                dbc.Col(
+                    dbc.Button(
+                        "Refresh",
+                        id="btn-refresh-hist",
+                        color="light",
+                        className="w-100",
+                    ),
+                    md=2,
                 ),
             ],
-            className="mb-2",
+            className="mb-3",
         ),
         dash_table.DataTable(
-            id='history-table',
+            id="history-table",
             columns=[
                 {"name": "Client", "id": "name"},
                 {"name": "Estimator", "id": "estimator"},
-                {"name": "Total", "id": "total_price", "type": "numeric", "format": {"specifier": "$,.0f"}},
+                {"name": "Total", "id": "total_price", "type": "numeric"},
                 {"name": "Status", "id": "status"},
-                # keep quote_id hidden so callbacks can use it
-                {"name": "Quote ID", "id": "quote_id", "hidden": True},
+                {"name": "Created", "id": "created_at"},
             ],
-            style_cell={'textAlign': 'left', 'padding': '8px', 'fontSize': 14},
-            style_header={
-                'fontWeight': 'bold',
-                'backgroundColor': '#f1f3f4',
-                'border': '1px solid #dee2e6'
-            },
+            style_cell={"textAlign": "left", "padding": "8px"},
+            style_header={"fontWeight": "bold", "backgroundColor": "#f6f8fa"},
+            row_selectable="single",
+            page_size=8,
             style_data_conditional=[
-                {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
+                {
+                    "if": {"filter_query": "{status} = 'Won'"},
+                    "backgroundColor": "#e6ffed",
+                },
+                {
+                    "if": {"filter_query": "{status} = 'Lost'"},
+                    "backgroundColor": "#ffeef0",
+                },
             ],
-            row_selectable='single',
-            page_size=10,
         ),
         dbc.Row(
             [
@@ -220,7 +554,7 @@ history_tab = dbc.Container(
                         className="w-100",
                         disabled=True,
                     ),
-                    width=6,
+                    md=4,
                 ),
                 dbc.Col(
                     dbc.Button(
@@ -230,7 +564,7 @@ history_tab = dbc.Container(
                         className="w-100",
                         disabled=True,
                     ),
-                    width=6,
+                    md=4,
                 ),
             ],
             className="mt-3",
@@ -240,31 +574,32 @@ history_tab = dbc.Container(
     fluid=True,
 )
 
-# 3. QUOTE BUILDER TAB
+# QUOTE BUILDER TAB
 quote_tab = dbc.Container(
     [
+        dcc.Store(id="cart-store", data=[]),
         dcc.Store(id="edit-mode-store", data={"mode": "new", "qid": None}),
+        html.Br(),
         dbc.Row(
             [
-                # CUSTOMER CARD
                 dbc.Col(
                     dbc.Card(
                         [
-                            dbc.CardHeader("1. Customer", className="fw-bold"),
+                            dbc.CardHeader("1. Customer"),
                             dbc.CardBody(
                                 [
                                     dcc.Dropdown(
                                         id="cust-select",
                                         options=[],
-                                        placeholder="Select an existing customer…",
+                                        placeholder="Select client...",
                                     ),
                                     html.Br(),
                                     dbc.Button(
-                                        "➕ New Customer",
+                                        "New Customer",
                                         id="btn-new-cust",
                                         size="sm",
-                                        color="outline-primary",
-                                        className="w-100 mb-2",
+                                        color="light",
+                                        className="w-100",
                                     ),
                                     dbc.Modal(
                                         [
@@ -273,7 +608,7 @@ quote_tab = dbc.Container(
                                                 [
                                                     dbc.Input(
                                                         id="nc-name",
-                                                        placeholder="Company / Name *",
+                                                        placeholder="Company / Name",
                                                         className="mb-2",
                                                     ),
                                                     dbc.Input(
@@ -297,14 +632,10 @@ quote_tab = dbc.Container(
                                                         className="mb-2",
                                                     ),
                                                     dbc.Button(
-                                                        "Save Customer",
+                                                        "Save",
                                                         id="btn-save-nc",
                                                         color="success",
                                                         className="w-100",
-                                                    ),
-                                                    html.Div(
-                                                        id="nc-error",
-                                                        className="small mt-2",
                                                     ),
                                                 ]
                                             ),
@@ -317,36 +648,32 @@ quote_tab = dbc.Container(
                                     dbc.Select(
                                         id="job-type",
                                         options=[
-                                            {"label": "Service", "value": "Service"},
+                                            {
+                                                "label": "Service",
+                                                "value": "Service",
+                                            },
                                             {"label": "Install", "value": "Install"},
                                         ],
-                                        placeholder="Job Type *",
+                                        placeholder="Job type",
                                         className="mb-2",
                                     ),
                                     dbc.Input(
                                         id="estimator",
-                                        placeholder="Estimator Name *",
-                                        className="mb-1",
-                                    ),
-                                    html.Small(
-                                        "* Required fields",
-                                        className="text-muted",
+                                        placeholder="Estimator name",
                                     ),
                                 ]
                             ),
                         ],
-                        className="h-100 shadow-sm",
+                        className="h-100 shadow-sm border-0",
                     ),
                     xs=12,
                     lg=4,
                     className="mb-3",
                 ),
-
-                # ITEMS CARD
                 dbc.Col(
                     dbc.Card(
                         [
-                            dbc.CardHeader("2. Items", className="fw-bold"),
+                            dbc.CardHeader("2. Items"),
                             dbc.CardBody(
                                 [
                                     dbc.Tabs(
@@ -358,7 +685,7 @@ quote_tab = dbc.Container(
                                                     dcc.Dropdown(
                                                         id="part-select",
                                                         options=[],
-                                                        placeholder="Search parts catalog…",
+                                                        placeholder="Search catalog...",
                                                     ),
                                                     dbc.Input(
                                                         id="part-qty",
@@ -382,7 +709,7 @@ quote_tab = dbc.Container(
                                                     dbc.Select(
                                                         id="labor-select",
                                                         options=[],
-                                                        placeholder="Select role…",
+                                                        placeholder="Select role",
                                                     ),
                                                     dbc.Input(
                                                         id="labor-hrs",
@@ -403,51 +730,46 @@ quote_tab = dbc.Container(
                                 ]
                             ),
                         ],
-                        className="h-100 shadow-sm",
+                        className="h-100 shadow-sm border-0",
                     ),
                     xs=12,
                     lg=4,
                     className="mb-3",
                 ),
-
-                # SUMMARY CARD
                 dbc.Col(
                     dbc.Card(
                         [
-                            dbc.CardHeader("3. Summary", className="fw-bold"),
+                            dbc.CardHeader("3. Summary"),
                             dbc.CardBody(
                                 [
                                     html.Div(
                                         id="cart-list",
-                                        style={"maxHeight": "240px", "overflowY": "auto"},
+                                        style={
+                                            "maxHeight": "220px",
+                                            "overflowY": "auto",
+                                        },
                                     ),
                                     html.Hr(),
-                                    html.Div(
-                                        [
-                                            html.Span("Total", className="fw-semibold"),
-                                            html.H3(
-                                                id="cart-total",
-                                                children="$0.00",
-                                                className="text-end text-success mb-0",
-                                            ),
-                                        ]
+                                    html.H4(
+                                        id="cart-total",
+                                        children="$0.00",
+                                        className="text-end text-success",
                                     ),
-                                    html.Br(),
                                     dbc.Button(
-                                        "Finalize & Save Quote",
+                                        "Finalize & Save",
                                         id="btn-finalize",
                                         color="success",
                                         size="lg",
-                                        className="w-100",
+                                        className="w-100 mt-2",
                                     ),
                                     html.Div(
                                         id="save-msg",
-                                        className="mt-3",
+                                        className="mt-3 text-center",
                                     ),
                                 ]
                             ),
                         ],
-                        className="h-100 shadow-sm",
+                        className="h-100 shadow-sm border-0",
                     ),
                     xs=12,
                     lg=4,
@@ -460,22 +782,65 @@ quote_tab = dbc.Container(
 )
 
 # =========================================================
-# APP LAYOUT
+#  APP LAYOUT
 # =========================================================
 
 app.layout = html.Div(
-    style={"backgroundColor": "#f5f6f8", "minHeight": "100vh"},
-    children=[
-        dcc.Store(id="cart-store", data=[]),
-        dbc.NavbarSimple(
-            brand="TradeOps Field",
-            brand_href="#",
+    [
+        dbc.Navbar(
+            [
+                dbc.NavbarBrand(
+                    [
+                        html.I(className="bi bi-lightning-charge-fill me-2"),
+                        "TradeOps Field",
+                    ],
+                    className="ms-2 fw-bold",
+                ),
+                dbc.Nav(
+                    [dbc.NavItem(dbc.NavLink("Tech Console", active=True))],
+                    className="ms-3",
+                    navbar=True,
+                ),
+                dbc.NavbarToggler(id="navbar-toggler"),
+            ],
             color="dark",
             dark=True,
-            sticky="top",
+            className="shadow-sm",
         ),
         dbc.Container(
             [
+                html.Br(),
+                html.Div(
+                    [
+                        html.H2("Hi, Tech 👋", className="fw-bold"),
+                        html.P(
+                            "Here’s what’s happening with your estimates and follow-ups.",
+                            className="text-muted",
+                        ),
+                    ],
+                    className="mb-3",
+                ),
+                dbc.Row(
+                    [
+                        kpi_card("metric-open-quotes", "Open Quotes", "bi bi-clipboard"),
+                        kpi_card(
+                            "metric-followups-today",
+                            "Follow-ups Today",
+                            "bi bi-telephone",
+                        ),
+                        kpi_card(
+                            "metric-avg-quote",
+                            "Average Quote",
+                            "bi bi-cash-coin",
+                        ),
+                        kpi_card(
+                            "metric-won-this-week",
+                            "Won This Week",
+                            "bi bi-trophy",
+                        ),
+                    ]
+                ),
+                html.Br(),
                 dbc.Tabs(
                     [
                         dbc.Tab(followup_tab, label="Follow-Up", tab_id="tab-fup"),
@@ -484,19 +849,60 @@ app.layout = html.Div(
                     ],
                     id="tabs",
                     active_tab="tab-fup",
-                    className="mt-3",
-                )
+                    className="mt-2",
+                ),
+                html.Br(),
             ],
             fluid=True,
         ),
     ],
+    style={"backgroundColor": "#f4f5f7", "minHeight": "100vh"},
 )
 
+
 # =========================================================
-# CALLBACKS / LOGIC
+#  CALLBACKS
 # =========================================================
 
-# 1. LOAD DATA FOR BUILDER + HISTORY
+# KPI Metrics
+@app.callback(
+    [
+        Output("metric-open-quotes", "children"),
+        Output("metric-followups-today", "children"),
+        Output("metric-avg-quote", "children"),
+        Output("metric-won-this-week", "children"),
+    ],
+    [
+        Input("tabs", "active_tab"),
+        Input("btn-refresh-fup", "n_clicks"),
+        Input("btn-filter-hist", "n_clicks"),
+        Input("btn-refresh-hist", "n_clicks"),
+    ],
+)
+def update_kpis(tab, *_):
+    q = _quotes_df()
+    fup = _followups_df()
+
+    open_count = int((q["status"] == "Open").sum())
+
+    today_str = date.today().strftime("%Y-%m-%d")
+    fup_today = int((fup["next_followup_date"] == today_str).sum())
+
+    avg_quote = q["total_price"].mean() if not q.empty else 0.0
+
+    # crude "this week" check
+    week_ago = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+    won_week = int(((q["status"] == "Won") & (q["created_at"] >= week_ago)).sum())
+
+    return (
+        f"{open_count}",
+        f"{fup_today}",
+        f"${avg_quote:,.0f}",
+        f"{won_week}",
+    )
+
+
+# Load dropdown options + history table
 @app.callback(
     [
         Output("cust-select", "options"),
@@ -511,37 +917,42 @@ app.layout = html.Div(
     ],
     [State("hist-filter-input", "value")],
 )
-def load_data(tab, n_filter, n_refresh, filter_name):
-    c_opts = [
+def load_dropdowns_and_history(tab, n_filter, n_refresh, filter_name):
+    cust_df = get_customers_df()
+    parts_df = get_parts_df()
+    labor_df = get_labor_df()
+
+    cust_opts = [
         {"label": r["name"], "value": r["customer_id"]}
-        for _, r in db.get_customers().iterrows()
+        for _, r in cust_df.iterrows()
     ]
-    p_opts = [
+    part_opts = [
         {
-            "label": f"{r['name']} (${r['retail_price']})",
+            "label": f"{r['name']} (${r['retail_price']:.0f})",
             "value": f"{r['part_id']}|{r['name']}|{r['cost']}|{r['retail_price']}",
         }
-        for _, r in db.get_parts().iterrows()
+        for _, r in parts_df.iterrows()
     ]
-    l_opts = [
+    labor_opts = [
         {
             "label": f"{r['role']} (${r['bill_rate']}/hr)",
             "value": f"{r['role']}|{r['base_cost']}|{r['bill_rate']}",
         }
-        for _, r in db.get_labor().iterrows()
+        for _, r in labor_df.iterrows()
     ]
 
-    hist_df = db.get_tech_history(estimator_name=filter_name)
-    hist_data = hist_df.to_dict("records") if not hist_df.empty else []
-    return c_opts, p_opts, l_opts, hist_data
+    hist_df = get_quote_history(estimator_name=filter_name)
+    hist_records = hist_df.to_dict("records")
 
-# 2. FOLLOW-UP LOGIC
+    return cust_opts, part_opts, labor_opts, hist_records
+
+
+# Follow-up table + modal
 @app.callback(
     [
         Output("modal-log", "is_open"),
         Output("fup-table", "data"),
         Output("btn-open-log", "disabled"),
-        Output("log-msg", "children"),
     ],
     [
         Input("btn-open-log", "n_clicks"),
@@ -558,56 +969,31 @@ def load_data(tab, n_filter, n_refresh, filter_name):
     ],
 )
 def handle_followup(
-    n_open,
-    n_save,
-    tab,
-    n_refresh,
-    selected,
-    is_open,
-    table_data,
-    outcome,
-    next_date,
+    n_open, n_save, tab, n_refresh, selected, is_open, table_data, outcome, next_date
 ):
     trigger = ctx.triggered_id
-    selected = selected or []
+    has_selection = bool(selected)
 
-    btn_disabled = False if selected else True
-    msg = dash.no_update
+    if trigger in ("tabs", "btn-refresh-fup"):
+        df = get_followup_queue()
+        return False, df.to_dict("records"), True
 
-    # load queue when tab changes or refresh clicked
-    if trigger in ["tabs", "btn-refresh-fup"]:
-        data = db.get_followup_queue().to_dict("records")
-        return False, data, True, ""
-
-    # row selection toggles button
     if trigger == "fup-table":
-        return is_open, dash.no_update, btn_disabled, ""
+        return is_open, dash.no_update, not has_selection
 
-    # open log modal
     if trigger == "btn-open-log":
-        if not selected:
-            return is_open, dash.no_update, btn_disabled, ""
-        return True, dash.no_update, btn_disabled, ""
+        return True, dash.no_update, not has_selection
 
-    # save log
-    if trigger == "btn-save-log":
-        if not selected:
-            msg = dbc.Alert("Select a quote before logging.", color="danger", fade=True, is_open=True)
-            return is_open, dash.no_update, btn_disabled, msg
-        if not next_date:
-            msg = dbc.Alert("Next follow-up date is required.", color="danger", fade=True, is_open=True)
-            return is_open, dash.no_update, btn_disabled, msg
-
+    if trigger == "btn-save-log" and has_selection:
         row = table_data[selected[0]]
-        db.log_interaction(row["quote_id"], outcome, next_date)
-        data = db.get_followup_queue().to_dict("records")
-        msg = dbc.Alert("Follow-up updated.", color="success", fade=True, is_open=True)
-        return False, data, True, msg
+        log_interaction(row["quote_id"], outcome, next_date)
+        df = get_followup_queue()
+        return False, df.to_dict("records"), True
 
-    # default
-    return is_open, dash.no_update, btn_disabled, msg
+    return is_open, dash.no_update, not has_selection
 
-# 3. HISTORY ACTIONS (EDIT / PDF)
+
+# History actions: enable buttons, edit, PDF
 @app.callback(
     [
         Output("tabs", "active_tab", allow_duplicate=True),
@@ -630,9 +1016,21 @@ def handle_followup(
 )
 def handle_history_actions(btn_edit, btn_pdf, selected, data):
     trigger = ctx.triggered_id
-    selected = selected or []
 
-    # No row selected: keep buttons disabled
+    if trigger == "history-table":
+        has_sel = bool(selected)
+        return (
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            not has_sel,
+            not has_sel,
+        )
+
     if not selected:
         return (
             dash.no_update,
@@ -648,25 +1046,12 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
 
     row = data[selected[0]]
 
-    # Enable buttons when a row is selected (if we ever trigger from table)
-    if trigger == "history-table":
-        return (
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            False,
-            False,
-        )
-
-    # LOAD INTO BUILDER
     if trigger == "btn-load-edit":
-        header, items_df = db.get_quote_details(row["quote_id"])
+        header, items_df = get_quote_details(row["quote_id"])
         cart = (
-            items_df[["item_name", "item_type", "unit_cost", "unit_price", "quantity"]]
+            items_df[
+                ["item_name", "item_type", "unit_cost", "unit_price", "quantity"]
+            ]
             .rename(
                 columns={
                     "item_name": "name",
@@ -687,13 +1072,12 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
             cart,
             edit_data,
             dash.no_update,
-            False,
-            False,
+            True,
+            True,
         )
 
-    # DOWNLOAD PDF
     if trigger == "btn-dl-pdf":
-        header, items_df = db.get_quote_details(row["quote_id"])
+        header, items_df = get_quote_details(row["quote_id"])
         items = (
             items_df[["item_name", "unit_price", "quantity"]]
             .rename(
@@ -705,7 +1089,9 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
             )
             .to_dict("records")
         )
-        pdf_file = generate_pdf(row["quote_id"], row["name"], items, header["total_price"])
+        pdf_file = generate_pdf(
+            row["quote_id"], row["name"], items, header["total_price"]
+        )
         return (
             dash.no_update,
             dash.no_update,
@@ -718,7 +1104,6 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
             False,
         )
 
-    # default
     return (
         dash.no_update,
         dash.no_update,
@@ -727,13 +1112,14 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
         dash.no_update,
         dash.no_update,
         dash.no_update,
-        False,
-        False,
+        True,
+        True,
     )
 
-# 4. CUSTOMER CREATION & CART MANAGEMENT
+
+# New customer modal
 @app.callback(
-    [Output("nc-modal", "is_open"), Output("cust-select", "value"), Output("nc-error", "children")],
+    [Output("nc-modal", "is_open"), Output("cust-select", "value")],
     [Input("btn-new-cust", "n_clicks"), Input("btn-save-nc", "n_clicks")],
     [
         State("nc-modal", "is_open"),
@@ -744,22 +1130,33 @@ def handle_history_actions(btn_edit, btn_pdf, selected, data):
         State("nc-phone", "value"),
     ],
 )
-def handle_cust(n1, n2, is_open, name, st, city, zipc, ph):
+def handle_new_customer(
+    n1, n2, is_open, name, street, city, zip_code, phone
+):
+    global MOCK_CUSTOMERS
     trigger = ctx.triggered_id
-
     if trigger == "btn-new-cust":
-        return True, dash.no_update, ""
+        return True, dash.no_update
 
-    if trigger == "btn-save-nc":
-        if not name:
-            err = dbc.Alert("Customer name is required.", color="danger", fade=True, is_open=True)
-            return True, dash.no_update, err
-        # simple save; more validation if you want
-        new_id = db.add_customer(name, st, city, "TX", zipc, ph)
-        return False, new_id, dbc.Alert("Customer added.", color="success", fade=True, is_open=True)
+    if trigger == "btn-save-nc" and name:
+        new_id = f"CUST-{1000 + len(MOCK_CUSTOMERS) + 1}"
+        MOCK_CUSTOMERS.append(
+            {
+                "customer_id": new_id,
+                "name": name,
+                "street": street or "",
+                "city": city or "",
+                "state": "TX",
+                "zip": zip_code or "",
+                "phone": phone or "",
+            }
+        )
+        return False, new_id
 
-    return is_open, dash.no_update, ""
+    return is_open, dash.no_update
 
+
+# Cart management
 @app.callback(
     [
         Output("cart-store", "data"),
@@ -779,67 +1176,71 @@ def handle_cust(n1, n2, is_open, name, st, city, zipc, ph):
         State("labor-hrs", "value"),
     ],
 )
-def update_cart(b1, b2, edit_data, cart, p_val, p_qty, l_val, l_hrs):
+def update_cart(b1, b2, edit_mode_data, cart, p_val, p_qty, l_val, l_hrs):
     trigger = ctx.triggered_id
-    cart = cart or []
+    if cart is None:
+        cart = []
 
-    # when edit-mode-store changes, we don't touch cart here
     if trigger == "edit-mode-store":
-        return dash.no_update, dash.no_update, dash.no_update
+        # cart is set by history callback; don't touch it here
+        items = [
+            html.Div(
+                [
+                    html.Span(f"{i['name']} (x{i['qty']})"),
+                    html.Span(
+                        f"${i['price'] * i['qty']:.2f}",
+                        className="float-end fw-semibold",
+                    ),
+                ],
+                className="border-bottom py-1 small",
+            )
+            for i in cart
+        ]
+        total = sum(i["price"] * i["qty"] for i in cart)
+        return cart, items, f"${total:,.2f}"
 
     if trigger == "btn-add-part" and p_val:
-        try:
-            pid, name, cost, price = p_val.split("|")
-            qty = float(p_qty or 0)
-            if qty <= 0:
-                # ignore invalid qty silently for now (could show error if desired)
-                pass
-            else:
-                cart.append(
-                    {
-                        "name": name,
-                        "type": "Part",
-                        "cost": float(cost),
-                        "price": float(price),
-                        "qty": qty,
-                    }
-                )
-        except Exception:
-            pass
+        pid, name, cost, price = p_val.split("|")
+        cart.append(
+            {
+                "name": name,
+                "type": "Part",
+                "cost": float(cost),
+                "price": float(price),
+                "qty": float(p_qty or 1),
+            }
+        )
 
     if trigger == "btn-add-labor" and l_val:
-        try:
-            role, cost, rate = l_val.split("|")
-            hrs = float(l_hrs or 0)
-            if hrs <= 0:
-                pass
-            else:
-                cart.append(
-                    {
-                        "name": f"Labor: {role}",
-                        "type": "Labor",
-                        "cost": float(cost),
-                        "price": float(rate),
-                        "qty": hrs,
-                    }
-                )
-        except Exception:
-            pass
+        role, cost, rate = l_val.split("|")
+        cart.append(
+            {
+                "name": f"Labor: {role}",
+                "type": "Labor",
+                "cost": float(cost),
+                "price": float(rate),
+                "qty": float(l_hrs or 0),
+            }
+        )
 
     items = [
         html.Div(
             [
                 html.Span(f"{i['name']} (x{i['qty']})"),
-                html.Span(f"${i['price'] * i['qty']:.2f}", className="float-end"),
+                html.Span(
+                    f"${i['price'] * i['qty']:.2f}",
+                    className="float-end fw-semibold",
+                ),
             ],
-            className="border-bottom py-1",
+            className="border-bottom py-1 small",
         )
         for i in cart
     ]
-    total = sum(i["price"] * i["qty"] for i in cart) if cart else 0.0
+    total = sum(i["price"] * i["qty"] for i in cart)
     return cart, items, f"${total:,.2f}"
 
-# 5. SAVE QUOTE (WITH VALIDATION + MESSAGES)
+
+# Save quote with validation
 @app.callback(
     Output("save-msg", "children"),
     Input("btn-finalize", "n_clicks"),
@@ -855,53 +1256,36 @@ def save_quote(n, cust, jtype, est, cart, edit_mode):
     if not n:
         return ""
 
-    cart = cart or []
+    # Basic validation
     missing = []
-
     if not cust:
         missing.append("Customer")
     if not jtype:
-        missing.append("Job Type")
+        missing.append("Job type")
     if not est:
         missing.append("Estimator")
     if not cart:
-        missing.append("Items (add at least one Part or Labor line)")
+        missing.append("At least one line item")
 
     if missing:
         return dbc.Alert(
-            f"Please complete all required fields before saving: {', '.join(missing)}.",
+            "Please add: " + ", ".join(missing),
             color="danger",
-            fade=True,
-            is_open=True,
+            className="py-2",
         )
 
-    try:
-        if edit_mode and edit_mode.get("mode") == "edit" and edit_mode.get("qid"):
-            db.update_existing_quote(edit_mode["qid"], cust, jtype, est, cart)
-            return dbc.Alert(
-                "Quote updated successfully.",
-                color="success",
-                fade=True,
-                is_open=True,
-            )
-        else:
-            qid = db.save_new_quote(cust, jtype, est, cart)
-            return dbc.Alert(
-                f"Quote saved successfully. ID: {qid}",
-                color="success",
-                fade=True,
-                is_open=True,
-            )
-    except Exception as e:
-        return dbc.Alert(
-            f"An error occurred while saving: {e}",
-            color="danger",
-            fade=True,
-            is_open=True,
-        )
+    if edit_mode and edit_mode.get("mode") == "edit" and edit_mode.get("qid"):
+        update_existing_quote(edit_mode["qid"], cust, jtype, est, cart)
+        msg = "Quote updated successfully."
+    else:
+        qid = save_new_quote(cust, jtype, est, cart)
+        msg = f"Quote saved! ID: {qid}"
+
+    return dbc.Alert(msg, color="success", className="py-2")
+
 
 # =========================================================
-# MAIN
+#  MAIN
 # =========================================================
 
 if __name__ == "__main__":
