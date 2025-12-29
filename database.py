@@ -1,26 +1,24 @@
-# app/database.py
+# database.py
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-import os
 
-# DATABASE_URL format examples:
-# - Local SQLite: sqlite:///./tradeops.db   (default for dev)
-# - Neon Postgres: postgresql+psycopg2://USER:PASSWORD@HOST/DBNAME?sslmode=require
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./tradeops.db")
+# Get DATABASE_URL from env (Render + Neon)
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://neondb_owner:npg_CY9j6DWvxrQA@ep-wispy-shadow-aeman4s8-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"  # fallback for local dev
+)
 
-connect_args = {}
-if DB_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+# SQLAlchemy 2.0-style engine
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+)
 
-engine = create_engine(DB_URL, connect_args=connect_args)
+SessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+    autocommit=False,
+)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
