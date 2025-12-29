@@ -115,3 +115,26 @@ class QuoteUpdate(BaseModel):
     title: Optional[str] = None
     status: Optional[str] = None
     line_items: Optional[List[QuoteLineItemIn]] = None
+# ... (keep existing code) ...
+
+# ---------- Notes / Activity ----------
+
+class NoteCreate(BaseModel):
+    content: str
+    author: Optional[str] = "Unknown"
+
+class NoteOut(BaseModel):
+    id: str
+    content: str
+    author: Optional[str]
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Ensure QuoteUpdate is present (from previous fix)
+class QuoteUpdate(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+    line_items: Optional[List[QuoteLineItemIn]] = None
+
