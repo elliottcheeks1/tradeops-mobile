@@ -38,18 +38,73 @@ followup_layout = dbc.Container([
     ], style={"display": "none"})
 ], fluid=True, className="mt-4")
 
-# TAB 2: QUOTE BUILDER
+# TAB 2: QUOTE BUILDER (Mobile Optimized)
 quote_layout = dbc.Container([
     dbc.Row([
-        dbc.Col([dbc.Card([dbc.CardHeader("1. Job Setup"), dbc.CardBody([dbc.Input(id="client-name", placeholder="Client Name", className="mb-2"), dbc.Select(id="job-type", options=[{"label": "Service", "value": "Service"}, {"label": "Install", "value": "Install"}], placeholder="Job Type", className="mb-2"), dbc.Input(id="estimator-name", placeholder="Estimator Name", className="mb-2")])])], width=4),
-        dbc.Col([dbc.Card([dbc.CardHeader("2. Labor & Materials"), dbc.CardBody([dbc.Tabs([
-            dbc.Tab(label="Labor", children=[html.Br(), dbc.Select(id="labor-role-select", options=get_labor_dropdown()), dbc.Input(id="labor-hours", type="number", placeholder="Hours", className="mt-2"), dbc.Button("Add Labor", id="btn-add-labor", color="secondary", size="sm", className="mt-2 w-100")]),
-            dbc.Tab(label="Materials", children=[html.Br(), dbc.Input(id="mat-name", placeholder="Item Name"), dbc.Row([dbc.Col(dbc.Input(id="mat-cost", type="number", placeholder="Cost"), width=6), dbc.Col(dbc.Input(id="mat-price", type="number", placeholder="Price"), width=6)]), dbc.Button("Add Material", id="btn-add-mat", color="secondary", size="sm", className="mt-2 w-100")])
-        ])])])], width=4),
-        dbc.Col([dbc.Card([dbc.CardHeader("3. Summary"), dbc.CardBody([html.Div(id="quote-preview-list"), html.Hr(), html.H4(id="live-quote-total", className="text-end"), dbc.Button("Save Quote", id="btn-save-quote", color="success", className="w-100 mt-3")])])], width=4)
+        # COLUMN 1: Job Setup
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("1. Job Setup"),
+                dbc.CardBody([
+                    dbc.Label("Client Info", className="fw-bold"),
+                    dbc.Input(id="client-name", placeholder="Client Name", className="mb-3"),
+                    dbc.Select(id="job-type", options=[
+                        {"label": "Service Call", "value": "Service"},
+                        {"label": "New Install", "value": "Install"},
+                        {"label": "Emergency", "value": "Emergency"}
+                    ], placeholder="Select Job Type", className="mb-3"),
+                    dbc.Input(id="estimator-name", placeholder="Estimator Name", className="mb-3")
+                ])
+            ], className="h-100 shadow-sm") # h-100 makes cards same height on desktop
+        ], xs=12, lg=4, className="mb-4"), # xs=12 stacks it on mobile
+        
+        # COLUMN 2: Labor & Materials
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("2. Add Line Items"),
+                dbc.CardBody([
+                    dbc.Tabs([
+                        dbc.Tab(label="Labor", children=[
+                            html.Br(),
+                            dbc.Label("Role"),
+                            dbc.Select(id="labor-role-select", options=get_labor_dropdown(), placeholder="Select Role"),
+                            html.Br(),
+                            dbc.Label("Hours"),
+                            dbc.Input(id="labor-hours", type="number", placeholder="0", className="mb-3"),
+                            dbc.Button("Add Labor", id="btn-add-labor", color="primary", outline=True, className="w-100")
+                        ]),
+                        dbc.Tab(label="Parts", children=[
+                            html.Br(),
+                            dbc.Label("Part Name"),
+                            dbc.Input(id="mat-name", placeholder="e.g. 1/2 inch copper"),
+                            html.Br(),
+                            dbc.Row([
+                                dbc.Col([dbc.Label("Cost"), dbc.Input(id="mat-cost", type="number", placeholder="$0.00")], width=6),
+                                dbc.Col([dbc.Label("Sell Price"), dbc.Input(id="mat-price", type="number", placeholder="$0.00")], width=6),
+                            ], className="mb-3"),
+                            dbc.Button("Add Part", id="btn-add-mat", color="primary", outline=True, className="w-100")
+                        ])
+                    ])
+                ])
+            ], className="h-100 shadow-sm")
+        ], xs=12, lg=4, className="mb-4"),
+        
+        # COLUMN 3: Summary
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("3. Review & Save"),
+                dbc.CardBody([
+                    html.H5("Quote Summary", className="card-title"),
+                    html.Hr(),
+                    html.Div(id="quote-preview-list", style={"maxHeight": "200px", "overflowY": "auto"}),
+                    html.Hr(),
+                    html.H2(id="live-quote-total", children="$0.00", className="text-end text-success fw-bold"),
+                    dbc.Button("Save Quote", id="btn-save-quote", color="success", size="lg", className="w-100 mt-3 shadow")
+                ])
+            ], className="h-100 shadow-sm")
+        ], xs=12, lg=4, className="mb-4")
     ])
-], fluid=True, className="mt-4")
-
+], fluid=True, className="mt-3")
 # TAB 3: SETTINGS
 settings_layout = dbc.Container([html.H4("⚙️ Settings"), dash_table.DataTable(data=db.get_labor_rates().to_dict('records'), columns=[{"name": "Role", "id": "role"}, {"name": "Bill Rate", "id": "bill_rate"}])], fluid=True, className="mt-4")
 
