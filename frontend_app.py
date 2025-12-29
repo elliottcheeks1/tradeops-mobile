@@ -1,664 +1,449 @@
-# frontend_app.py
-"""
-Dash UI for TradeOps.
-
-- Polished desktop dashboard + quote editor
-- Uses mock data by default
-- Tries to sync with FastAPI /quotes endpoints if available
-"""
-
 import os
+import time
 from datetime import datetime
-
 import dash
-from dash import Dash, dcc, html, Input, Output, State, dash_table
+from dash import dcc, html, Input, Output, State, dash_table, ctx
 import dash_bootstrap_components as dbc
 import pandas as pd
 import requests
 
 # -------------------------------------------------------------------
-# Config
+# Config & Utils
 # -------------------------------------------------------------------
-# If API_BASE_URL is set (e.g. http://localhost:8000), we use it.
-# In Render, API and Dash share the same origin, so "" means "same host".
 API_BASE_URL = os.getenv("API_BASE_URL", "").rstrip("/")
-
 
 def api_url(path: str) -> str:
     return f"{API_BASE_URL}{path}"
 
-
 # -------------------------------------------------------------------
-# Mock data (used if API not reachable)
+# Dash Instance
 # -------------------------------------------------------------------
-MOCK_QUOTES = [
-    {
-        "id": 1,
-        "customer_name": "Kevin Parker",
-        "status": "New Lead",
-        "source": "Google Ads",
-        "job_type": "HVAC Tune-up",
-        "job_address": "123 Maple St",
-        "created_at": "2025-12-20T09:15:00",
-        "total_price": 356.00,
-    },
-    {
-        "id": 2,
-        "customer_name": "Johnathan Riley",
-        "status": "First Contact",
-        "source": "Web Form",
-        "job_type": "16 SEER AC Install",
-        "job_address": "456 Oak Ave",
-        "created_at": "2025-12-20T10:30:00",
-        "total_price": 8200.00,
-    },
-    {
-        "id": 3,
-        "customer_name": "High Point Creamery",
-        "status": "Estimate Sent",
-        "source": "Referral",
-        "job_type": "Panel Upgrade 200A",
-        "job_address": "18 Industrial Way",
-        "created_at": "2025-12-19T14:45:00",
-        "total_price": 5800.00,
-    },
-]
+# Using a "Minty" or "Teal" theme to match your screenshot
+external_stylesheets = [dbc.themes.MINTY, dbc.icons.BOOTSTRAP]
 
-
-def as_df(quotes):
-    if not quotes:
-        return pd.DataFrame(MOCK_QUOTES)
-    return pd.DataFrame(quotes)
-
-
-# -------------------------------------------------------------------
-# API helpers (safe: fall back to mock data)
-# -------------------------------------------------------------------
-def fetch_quotes():
-    """Try to load from /quotes; on error use mock."""
-    try:
-        resp = requests.get(api_url("/quotes"), timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, list) and data:
-                return data
-    except Exception:
-        pass
-    return MOCK_QUOTES.copy()
-
-
-def save_quote_api(quote):
-    """
-    Try to POST or PUT quote to API.
-    If anything fails, just return the same quote (UI will still update).
-    """
-    try:
-        quote_id = quote.get("id")
-        payload = quote.copy()
-        # created_at formatting
-        if isinstance(payload.get("created_at"), datetime):
-            payload["created_at"] = payload["created_at"].isoformat()
-
-        if quote_id:
-            resp = requests.put(api_url(f"/quotes/{quote_id}"), json=payload, timeout=5)
-        else:
-            resp = requests.post(api_url("/quotes"), json=payload, timeout=5)
-
-        if resp.status_code in (200, 201):
-            return resp.json()
-    except Exception:
-        pass
-    return quote
-
-
-# -------------------------------------------------------------------
-# Dash app
-# -------------------------------------------------------------------
-external_stylesheets = [dbc.themes.BOOTSTRAP]
-
-dash_app: Dash = dash.Dash(
+dash_app = dash.Dash(
     __name__,
     external_stylesheets=external_stylesheets,
     suppress_callback_exceptions=True,
-    requests_pathname_prefix="/app/",  # because we mount at /app
+    requests_pathname_prefix="/app/",
 )
-
-# Alias so FastAPI can import it
-app = dash_app
+app = dash_app  # Expose for FastAPI
 
 # -------------------------------------------------------------------
-# Layout components
+# Layout Components
 # -------------------------------------------------------------------
-def kpi_card(title, value, sublabel=None, pill=None, id=None):
+
+def kpi_card(title, value, subtitle, icon_class, color="success"):
     return dbc.Card(
-        [
-            dbc.CardBody(
-                [
-                    html.Div(title, className="text-muted small mb-1"),
-                    html.Div(
-                        value,
-                        id=id,
-                        className="h4 mb-0 fw-semibold",
-                    ),
-                    html.Div(
-                        [
-                            html.Span(
-                                pill or "",
-                                className="badge bg-success-subtle text-success me-2",
-                            ),
-                            html.Span(
-                                sublabel or "",
-                                className="text-muted small",
-                            ),
-                        ],
-                        className="mt-1",
-                    ),
-                ]
-            )
-        ],
-        className="shadow-sm h-100",
+        dbc.CardBody([
+            html.Div([
+                html.H6(title, className="text-uppercase text-muted mb-2", style={"fontSize": "0.75rem"}),
+                html.Div([
+                    html.H2(value, className=f"text-{color} mb-0"),
+                    html.I(className=f"{icon_class} text-{color} opacity-50 display-6 position-absolute top-0 end-0 mt-3 me-3")
+                ], className="position-relative")
+            ]),
+            html.Small(subtitle, className="text-muted")
+        ]),
+        className="shadow-sm border-0 h-100"
     )
 
-
-def quote_editor_form():
-    return dbc.Card(
-        [
-            dbc.CardHeader("Quote details", className="fw-semibold"),
-            dbc.CardBody(
-                [
-                    dcc.Input(
-                        id="quote-id",
-                        type="hidden",
-                    ),
+def navbar():
+    return dbc.Navbar(
+        dbc.Container(
+            [
+                html.A(
                     dbc.Row(
                         [
-                            dbc.Col(
-                                dbc.FormFloating(
-                                    [
-                                        dbc.Input(
-                                            id="customer-name",
-                                            placeholder=" ",
-                                            type="text",
-                                        ),
-                                        dbc.Label("Customer name"),
-                                    ]
-                                ),
-                                md=6,
-                            ),
-                            dbc.Col(
-                                dbc.FormFloating(
-                                    [
-                                        dbc.Select(
-                                            id="quote-status",
-                                            options=[
-                                                {
-                                                    "label": "New Lead",
-                                                    "value": "New Lead",
-                                                },
-                                                {
-                                                    "label": "First Contact",
-                                                    "value": "First Contact",
-                                                },
-                                                {
-                                                    "label": "Estimate Sent",
-                                                    "value": "Estimate Sent",
-                                                },
-                                                {
-                                                    "label": "Approved",
-                                                    "value": "Approved",
-                                                },
-                                                {
-                                                    "label": "Lost",
-                                                    "value": "Lost",
-                                                },
-                                            ],
-                                        ),
-                                        dbc.Label("Status"),
-                                    ]
-                                ),
-                                md=6,
-                            ),
+                            dbc.Col(html.I(className="bi bi-tools text-white fs-4")),
+                            dbc.Col(dbc.NavbarBrand("TradeOps Enterprise | Dashboard", className="ms-2 fw-bold text-white")),
                         ],
-                        className="mb-3",
+                        align="center",
+                        className="g-0",
                     ),
-                    dbc.Row(
-                        [
-                            dbc.Col(
-                                dbc.FormFloating(
-                                    [
-                                        dbc.Input(
-                                            id="job-type",
-                                            placeholder=" ",
-                                            type="text",
-                                        ),
-                                        dbc.Label("Job type"),
-                                    ]
-                                ),
-                                md=6,
-                            ),
-                            dbc.Col(
-                                dbc.FormFloating(
-                                    [
-                                        dbc.Input(
-                                            id="job-address",
-                                            placeholder=" ",
-                                            type="text",
-                                        ),
-                                        dbc.Label("Job address"),
-                                    ]
-                                ),
-                                md=6,
-                            ),
-                        ],
-                        className="mb-3",
-                    ),
-                    dbc.Row(
-                        [
-                            dbc.Col(
-                                dbc.FormFloating(
-                                    [
-                                        dbc.Input(
-                                            id="quote-source",
-                                            placeholder=" ",
-                                            type="text",
-                                        ),
-                                        dbc.Label("Source (e.g. Google Ads)"),
-                                    ]
-                                ),
-                                md=6,
-                            ),
-                            dbc.Col(
-                                dbc.FormFloating(
-                                    [
-                                        dbc.Input(
-                                            id="quote-total",
-                                            placeholder=" ",
-                                            type="number",
-                                            step="0.01",
-                                        ),
-                                        dbc.Label("Quote total ($)"),
-                                    ]
-                                ),
-                                md=6,
-                            ),
-                        ],
-                        className="mb-3",
-                    ),
-                    dbc.Button(
-                        "Save quote",
-                        id="save-quote-btn",
-                        color="primary",
-                        className="w-100",
-                    ),
-                    html.Div(
-                        id="save-status",
-                        className="text-success small mt-2",
-                    ),
-                ]
-            ),
-        ],
-        className="shadow-sm h-100",
+                    href="/app",
+                    style={"textDecoration": "none"},
+                ),
+            ],
+            fluid=True,
+        ),
+        color="#20c997", # Teal color
+        dark=True,
+        className="mb-4 shadow-sm py-3",
     )
 
+# -------------------------------------------------------------------
+# Tab 1: CRM & Pipeline View
+# -------------------------------------------------------------------
+def pipeline_view():
+    return html.Div([
+        # KPIs
+        dbc.Row([
+            dbc.Col(kpi_card("Won Revenue", "$14,828", "2 Deals", "bi bi-cash-stack"), md=3),
+            dbc.Col(kpi_card("Open Pipeline", "$8,500", "1 Active", "bi bi-funnel", color="warning"), md=3),
+            dbc.Col(kpi_card("Win Rate", "66.7%", "Of closed deals", "bi bi-trophy", color="info"), md=3),
+            dbc.Col(kpi_card("Avg Margin", "54.2%", "On won jobs", "bi bi-percent"), md=3),
+        ], className="mb-4"),
 
-dash_app.layout = dbc.Container(
-    [
-        dcc.Store(id="quotes-store"),  # holds list of quotes
-        dcc.Interval(id="quotes-interval", interval=60 * 1000, n_intervals=0),
-        html.Br(),
-        # Top navbar / header
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        html.H3("TradeOps Command Center", className="mb-0"),
-                        html.Div(
-                            "Today’s schedule, revenue, and open quotes at a glance.",
-                            className="text-muted",
-                        ),
-                    ],
-                    md=8,
-                ),
-                dbc.Col(
-                    dbc.Button(
-                        "New Quote",
-                        id="new-quote-btn",
-                        color="secondary",
-                        className="float-end",
-                    ),
-                    md=4,
-                ),
-            ],
-            align="center",
-            className="mb-4",
-        ),
-        # KPI cards
-        dbc.Row(
-            [
-                dbc.Col(
-                    kpi_card(
-                        "Open quotes",
-                        "$0",
-                        "Active opportunities",
-                        pill="",
-                        id="kpi-open-quotes",
-                    ),
-                    md=3,
-                ),
-                dbc.Col(
-                    kpi_card(
-                        "Avg quote size",
-                        "$0",
-                        "Average ticket",
-                        pill="",
-                        id="kpi-avg-quote",
-                    ),
-                    md=3,
-                ),
-                dbc.Col(
-                    kpi_card(
-                        "Quotes today",
-                        "0",
-                        "Created today",
-                        pill="",
-                        id="kpi-quotes-today",
-                    ),
-                    md=3,
-                ),
-                dbc.Col(
-                    kpi_card(
-                        "Win rate (mock)",
-                        "42%",
-                        "Last 30 days",
-                        pill="",
-                        id="kpi-win-rate",
-                    ),
-                    md=3,
-                ),
-            ],
-            className="mb-4",
-        ),
-        # Main content: table + editor
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        dbc.Card(
-                            [
-                                dbc.CardHeader(
-                                    dbc.Row(
-                                        [
-                                            dbc.Col(
-                                                html.Span(
-                                                    "Pipeline",
-                                                    className="fw-semibold",
-                                                ),
-                                                md=6,
-                                            ),
-                                            dbc.Col(
-                                                dbc.InputGroup(
-                                                    [
-                                                        dbc.Input(
-                                                            id="search-input",
-                                                            placeholder="Search customers or jobs...",
-                                                            type="text",
-                                                        ),
-                                                        dbc.Button(
-                                                            "Search",
-                                                            id="search-btn",
-                                                            color="outline-secondary",
-                                                        ),
-                                                    ]
-                                                ),
-                                                md=6,
-                                            ),
-                                        ]
-                                    )
-                                ),
-                                dbc.CardBody(
-                                    [
-                                        dash_table.DataTable(
-                                            id="quotes-table",
-                                            columns=[
-                                                {
-                                                    "name": "ID",
-                                                    "id": "id",
-                                                },
-                                                {
-                                                    "name": "Customer",
-                                                    "id": "customer_name",
-                                                },
-                                                {
-                                                    "name": "Status",
-                                                    "id": "status",
-                                                },
-                                                {
-                                                    "name": "Job",
-                                                    "id": "job_type",
-                                                },
-                                                {
-                                                    "name": "Source",
-                                                    "id": "source",
-                                                },
-                                                {
-                                                    "name": "Total ($)",
-                                                    "id": "total_price",
-                                                    "type": "numeric",
-                                                    "format": dash_table.FormatTemplate.money(0),
-                                                },
-                                                {
-                                                    "name": "Created",
-                                                    "id": "created_at",
-                                                },
-                                            ],
-                                            data=[],
-                                            row_selectable="single",
-                                            style_table={
-                                                "height": "520px",
-                                                "overflowY": "auto",
-                                            },
-                                            style_cell={
-                                                "padding": "8px",
-                                                "fontSize": 13,
-                                            },
-                                            style_header={
-                                                "backgroundColor": "#f8f9fa",
-                                                "fontWeight": "bold",
-                                            },
-                                            style_data_conditional=[
-                                                {
-                                                    "if": {
-                                                        "filter_query": "{status} = 'New Lead'"
-                                                    },
-                                                    "backgroundColor": "#e8f2ff",
-                                                },
-                                                {
-                                                    "if": {
-                                                        "filter_query": "{status} = 'Approved'"
-                                                    },
-                                                    "backgroundColor": "#e6f4ea",
-                                                },
-                                            ],
-                                        )
-                                    ]
-                                ),
-                            ],
-                            className="shadow-sm h-100",
+        # Filters
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Estimator", className="small text-muted"),
+                        dbc.Select(
+                            id="filter-estimator",
+                            options=[{"label": "All Estimators", "value": "all"}],
+                            value="all",
+                            size="sm"
                         )
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("Status", className="small text-muted"),
+                        dbc.Select(
+                            id="filter-status",
+                            options=[
+                                {"label": "All Status", "value": "all"},
+                                {"label": "Draft", "value": "draft"},
+                                {"label": "Sent", "value": "sent"},
+                                {"label": "Approved", "value": "approved"},
+                                {"label": "Won", "value": "won"},
+                            ],
+                            value="all",
+                            size="sm"
+                        )
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("Search", className="small text-muted"),
+                        dbc.Input(id="search-input", placeholder="Client or ID...", size="sm")
+                    ], md=3),
+                    dbc.Col([
+                         dbc.Label("Refresh", className="small text-muted d-block"),
+                         dbc.Button(html.I(className="bi bi-arrow-clockwise"), id="refresh-btn", color="light", size="sm")
+                    ], md=3)
+                ])
+            ])
+        ], className="mb-4 border-0 shadow-sm"),
+
+        # Table
+        dbc.Card([
+            dbc.CardHeader("Quotes List", className="bg-white border-bottom-0 fw-bold"),
+            dbc.CardBody([
+                dash_table.DataTable(
+                    id="quotes-table",
+                    columns=[
+                        {"name": "ID", "id": "id"},
+                        {"name": "Client", "id": "customer_name"},
+                        {"name": "Status", "id": "status"},
+                        {"name": "Total", "id": "total_price", "type": "numeric", "format": dash_table.FormatTemplate.money(0)},
+                        {"name": "Date", "id": "created_at"},
                     ],
-                    md=7,
+                    style_as_list_view=True,
+                    row_selectable="single",
+                    style_header={"fontWeight": "bold", "backgroundColor": "#f8f9fa", "borderBottom": "2px solid #dee2e6"},
+                    style_cell={"padding": "12px", "fontSize": "14px"},
+                    style_data_conditional=[
+                        {'if': {'filter_query': '{status} = "won"'}, 'color': '#198754', 'fontWeight': 'bold'},
+                        {'if': {'filter_query': '{status} = "lost"'}, 'color': '#dc3545'},
+                    ],
+                    page_size=10
                 ),
-                dbc.Col(quote_editor_form(), md=5),
-            ],
-            className="mb-4",
-        ),
-    ],
-    fluid=True,
-)
+                html.Div(id="table-actions", className="mt-3", children=[
+                    dbc.Button("Edit Quote", id="btn-edit-quote", color="primary", size="sm", className="me-2", disabled=True),
+                    dbc.Button("Mark Won", id="btn-mark-won", color="success", size="sm", className="me-2", disabled=True),
+                ])
+            ], className="p-0")
+        ], className="shadow-sm border-0 mb-4"),
+
+        # Notes Section (Hidden until row selected)
+        html.Div(id="notes-container", style={"display": "none"}, children=[
+             dbc.Card([
+                dbc.CardHeader(id="notes-header", children="Notes", className="text-white fw-bold", style={"backgroundColor": "#f06595"}), # Pinkish red
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([
+                            html.H6("History", className="text-muted small"),
+                            html.Div(id="notes-history", style={"maxHeight": "200px", "overflowY": "auto"}, className="mb-3 border p-2 bg-light rounded")
+                        ], md=8),
+                        dbc.Col([
+                            html.H6("Add Note", className="text-muted small"),
+                            dbc.Textarea(id="new-note-input", placeholder="Enter notes...", rows=3, className="mb-2"),
+                            dbc.Button("Add Note", id="btn-add-note", color="danger", size="sm", className="w-100", style={"backgroundColor": "#f06595", "borderColor": "#f06595"})
+                        ], md=4)
+                    ])
+                ])
+             ], className="shadow-sm border-0")
+        ])
+    ])
+
+# -------------------------------------------------------------------
+# Tab 2: Quote Builder
+# -------------------------------------------------------------------
+def quote_builder_view():
+    return html.Div([
+        dbc.Row([
+            # Left Col: Details
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader("1. Customer & Job", className="bg-white fw-bold"),
+                    dbc.CardBody([
+                        dbc.Label("Customer Name"),
+                        dbc.Input(id="qb-customer", placeholder="e.g. Burger King", className="mb-3"),
+                        
+                        dbc.Label("Job Title"),
+                        dbc.Input(id="qb-title", placeholder="e.g. Grease Trap Repair", className="mb-3"),
+
+                        dbc.Row([
+                            dbc.Col([dbc.Label("Status"), dbc.Select(id="qb-status", options=[
+                                {"label": "Draft", "value": "draft"},
+                                {"label": "Sent", "value": "sent"},
+                                {"label": "Won", "value": "won"},
+                            ], value="draft")], md=6),
+                             dbc.Col([dbc.Label("Estimator"), dbc.Input(id="qb-estimator", value="Elliott", disabled=True)], md=6),
+                        ])
+                    ])
+                ], className="shadow-sm border-0 h-100")
+            ], md=4),
+
+            # Middle Col: Line Items (Simplified for MVP)
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader("2. Line Items", className="bg-white fw-bold"),
+                    dbc.CardBody([
+                        # Item 1
+                        dbc.Row([
+                            dbc.Col(dbc.Input(id="item-1-desc", placeholder="Description (e.g. Labor)"), md=6),
+                            dbc.Col(dbc.Input(id="item-1-qty", type="number", placeholder="Qty", value=1), md=2),
+                            dbc.Col(dbc.Input(id="item-1-price", type="number", placeholder="Price", value=0), md=4),
+                        ], className="mb-2"),
+                        # Item 2
+                         dbc.Row([
+                            dbc.Col(dbc.Input(id="item-2-desc", placeholder="Description (e.g. Parts)"), md=6),
+                            dbc.Col(dbc.Input(id="item-2-qty", type="number", placeholder="Qty", value=1), md=2),
+                            dbc.Col(dbc.Input(id="item-2-price", type="number", placeholder="Price", value=0), md=4),
+                        ], className="mb-2"),
+                        
+                        html.Hr(),
+                        html.H4(id="qb-total-display", className="text-end text-success", children="$0.00")
+                    ])
+                ], className="shadow-sm border-0 h-100")
+            ], md=5),
+
+            # Right Col: Actions
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader("3. Save", className="bg-white fw-bold"),
+                    dbc.CardBody([
+                        dcc.Input(id="qb-quote-id", type="hidden"), # Hidden ID for updates
+                        dbc.Button("Finalize & Save", id="btn-save-quote", color="success", className="w-100 py-3 fw-bold fs-5"),
+                        html.Div(id="qb-save-msg", className="mt-2 text-center small")
+                    ])
+                ], className="shadow-sm border-0 h-100")
+            ], md=3)
+        ])
+    ])
+
+
+# -------------------------------------------------------------------
+# Main Layout
+# -------------------------------------------------------------------
+dash_app.layout = html.Div([
+    dcc.Store(id="quotes-store"), # Raw data
+    dcc.Interval(id="auto-refresh", interval=30*1000, n_intervals=0),
+    navbar(),
+    dbc.Container([
+        dbc.Tabs([
+            dbc.Tab(pipeline_view(), label="CRM & Pipeline", tab_id="tab-pipeline", labelClassName="text-dark fw-bold"),
+            dbc.Tab(quote_builder_view(), label="Quote Builder", tab_id="tab-builder", labelClassName="text-dark fw-bold"),
+        ], id="main-tabs", active_tab="tab-pipeline", className="mb-4"),
+    ], fluid=True)
+], style={"backgroundColor": "#f4f6f9", "minHeight": "100vh"})
 
 
 # -------------------------------------------------------------------
 # Callbacks
 # -------------------------------------------------------------------
+
+# 1. Load Data
 @dash_app.callback(
     Output("quotes-store", "data"),
-    Input("quotes-interval", "n_intervals"),
-    prevent_initial_call=False,
+    [Input("auto-refresh", "n_intervals"), Input("refresh-btn", "n_clicks"), Input("main-tabs", "active_tab")],
 )
-def load_quotes(_):
-    """Load quotes from API or mock once per minute (and on first load)."""
-    return fetch_quotes()
+def load_data(_n, _btn, _tab):
+    try:
+        resp = requests.get(api_url("/quotes"), timeout=4)
+        if resp.status_code == 200:
+            return resp.json()
+    except:
+        pass
+    return []
 
+# 2. Populate Table
+@dash_app.callback(
+    Output("quotes-table", "data"),
+    Input("quotes-store", "data")
+)
+def update_table(data):
+    if not data: return []
+    # formatting for display
+    df = pd.DataFrame(data)
+    if "created_at" in df.columns:
+        df["created_at"] = df["created_at"].astype(str).str.slice(0, 10)
+    return df.to_dict("records")
 
+# 3. Handle Selection (Enable Buttons & Show Notes)
 @dash_app.callback(
     [
-        Output("quotes-table", "data"),
-        Output("kpi-open-quotes", "children"),
-        Output("kpi-avg-quote", "children"),
-        Output("kpi-quotes-today", "children"),
-    ],
-    Input("quotes-store", "data"),
-)
-def update_table_and_kpis(quotes):
-    df = as_df(quotes)
-
-    # KPIs
-    total_open = len(df)
-    avg_size = df["total_price"].mean() if not df.empty else 0
-    today = datetime.utcnow().date().isoformat()
-    quotes_today = (
-        df["created_at"]
-        .astype(str)
-        .str.slice(0, 10)
-        .eq(today)
-        .sum()
-        if "created_at" in df.columns
-        else 0
-    )
-
-    return (
-        df.to_dict("records"),
-        f"{total_open}",
-        f"${avg_size:,.0f}",
-        f"{quotes_today}",
-    )
-
-
-@dash_app.callback(
-    [
-        Output("quote-id", "value"),
-        Output("customer-name", "value"),
-        Output("quote-status", "value"),
-        Output("job-type", "value"),
-        Output("job-address", "value"),
-        Output("quote-source", "value"),
-        Output("quote-total", "value"),
-        Output("save-status", "children"),
+        Output("btn-edit-quote", "disabled"),
+        Output("btn-mark-won", "disabled"),
+        Output("notes-container", "style"),
+        Output("notes-header", "children"),
+        Output("notes-history", "children"),
     ],
     [
         Input("quotes-table", "selected_rows"),
-        Input("new-quote-btn", "n_clicks"),
+        Input("btn-add-note", "n_clicks")
     ],
-    State("quotes-table", "data"),
-    prevent_initial_call=True,
+    [
+        State("quotes-table", "data"),
+        State("new-note-input", "value")
+    ]
 )
-def populate_form(selected_rows, new_clicks, table_data):
-    ctx = dash.callback_context
+def handle_selection(selected_rows, add_note_click, table_data, new_note_text):
+    trigger = ctx.triggered_id
+    
+    # Check if a row is selected
+    if not selected_rows:
+        return True, True, {"display": "none"}, "Notes", []
 
-    if not ctx.triggered:
-        raise dash.exceptions.PreventUpdate
+    row_idx = selected_rows[0]
+    row = table_data[row_idx]
+    quote_id = row["id"]
+    customer = row.get("customer_name", "Unknown")
 
-    trigger = ctx.triggered[0]["prop_id"].split(".")[0]
+    # Handle Note Addition
+    if trigger == "btn-add-note" and new_note_text:
+        try:
+            requests.post(api_url(f"/quotes/{quote_id}/notes"), json={"content": new_note_text, "author": "Elliott"})
+        except:
+            pass
+    
+    # Fetch Notes
+    notes_display = []
+    try:
+        resp = requests.get(api_url(f"/quotes/{quote_id}/notes"))
+        if resp.status_code == 200:
+            notes = resp.json()
+            for n in notes:
+                notes_display.append(
+                    html.Div([
+                        html.Small(f"{n['created_at'][:10]} - {n['author']}:", className="fw-bold text-muted"),
+                        html.Div(n['content'], className="ms-2")
+                    ], className="mb-2 border-bottom pb-1")
+                )
+    except:
+        notes_display = [html.Div("Error loading notes.")]
 
-    # New quote
-    if trigger == "new-quote-btn":
-        return "", "", "New Lead", "", "", "", None, ""
+    return False, False, {"display": "block"}, f"Notes: {customer} (#{quote_id[:8]})", notes_display
 
-    # Existing row selected
-    if trigger == "quotes-table" and selected_rows:
-        idx = selected_rows[0]
-        row = table_data[idx]
-        return (
-            row.get("id"),
-            row.get("customer_name"),
-            row.get("status"),
-            row.get("job_type"),
-            row.get("job_address"),
-            row.get("source"),
-            row.get("total_price"),
-            "",
-        )
+# 4. Mark Won
+@dash_app.callback(
+    Output("refresh-btn", "n_clicks"), # Trigger refresh
+    Input("btn-mark-won", "n_clicks"),
+    State("quotes-table", "selected_rows"),
+    State("quotes-table", "data"),
+    prevent_initial_call=True
+)
+def mark_won(n_clicks, selected, data):
+    if not selected: return dash.no_update
+    row = data[selected[0]]
+    requests.put(api_url(f"/quotes/{row['id']}"), json={"status": "won"})
+    return (n_clicks or 0) + 1
 
-    raise dash.exceptions.PreventUpdate
-
-
+# 5. Edit Quote (Switch Tab & Populate)
 @dash_app.callback(
     [
-        Output("quotes-store", "data"),
-        Output("save-status", "children"),
+        Output("main-tabs", "active_tab"),
+        Output("qb-quote-id", "value"),
+        Output("qb-customer", "value"),
+        Output("qb-title", "value"),
+        Output("qb-status", "value"),
+        # Items (simple mapping for 2 items)
+        Output("item-1-desc", "value"),
+        Output("item-1-qty", "value"),
+        Output("item-1-price", "value"),
+        Output("item-2-desc", "value"),
+        Output("item-2-qty", "value"),
+        Output("item-2-price", "value"),
     ],
-    Input("save-quote-btn", "n_clicks"),
-    [
-        State("quote-id", "value"),
-        State("customer-name", "value"),
-        State("quote-status", "value"),
-        State("job-type", "value"),
-        State("job-address", "value"),
-        State("quote-source", "value"),
-        State("quote-total", "value"),
-        State("quotes-store", "data"),
-    ],
-    prevent_initial_call=True,
+    Input("btn-edit-quote", "n_clicks"),
+    State("quotes-table", "selected_rows"),
+    State("quotes-table", "data"),
+    prevent_initial_call=True
 )
-def save_quote(
-    n_clicks,
-    quote_id,
-    customer_name,
-    status,
-    job_type,
-    job_address,
-    source,
-    total_price,
-    quotes_store,
-):
-    if not n_clicks:
-        raise dash.exceptions.PreventUpdate
+def edit_quote(n_clicks, selected, data):
+    if not selected: return dash.no_update
+    row = data[selected[0]]
+    
+    # We would need to fetch full details here in a real app to get line items
+    # For now, we pre-fill main details and leave items blank/default
+    return "tab-builder", row["id"], row["customer_name"], row.get("title", ""), row["status"], \
+           None, 1, 0, None, 1, 0
 
-    quotes = quotes_store or []
-
-    # Build quote dict
-    new_quote = {
-        "id": quote_id,
-        "customer_name": customer_name or "",
-        "status": status or "New Lead",
-        "job_type": job_type or "",
-        "job_address": job_address or "",
-        "source": source or "",
-        "total_price": float(total_price or 0),
-        "created_at": datetime.utcnow().isoformat(),
+# 6. Save Quote
+@dash_app.callback(
+    Output("qb-save-msg", "children"),
+    Input("btn-save-quote", "n_clicks"),
+    [
+        State("qb-quote-id", "value"),
+        State("qb-customer", "value"),
+        State("qb-title", "value"),
+        State("qb-status", "value"),
+        State("item-1-desc", "value"),
+        State("item-1-qty", "value"),
+        State("item-1-price", "value"),
+        State("item-2-desc", "value"),
+        State("item-2-qty", "value"),
+        State("item-2-price", "value"),
+    ],
+    prevent_initial_call=True
+)
+def save_quote_builder(n_clicks, q_id, cust, title, status, i1d, i1q, i1p, i2d, i2q, i2p):
+    # Construct Payload
+    items = []
+    if i1d: items.append({"description": i1d, "qty": float(i1q or 0), "unit_price": float(i1p or 0)})
+    if i2d: items.append({"description": i2d, "qty": float(i2q or 0), "unit_price": float(i2p or 0)})
+    
+    payload = {
+        "customer_id": "cust-demo", # Hardcoded for demo
+        "location_id": "loc-demo",
+        "title": title or "Untitled Job",
+        "line_items": items,
+        "status": status
     }
 
-    # Try to sync with API
-    saved = save_quote_api(new_quote)
+    # Hack: Add customer name to schemas if we were doing this properly
+    # For now, we rely on the API defaults
+    
+    try:
+        if q_id:
+            # Update
+            requests.put(api_url(f"/quotes/{q_id}"), json=payload)
+            return dbc.Alert("Quote Updated!", color="success")
+        else:
+            # Create
+            payload["customer_id"] = "cust-demo" # Required by schema
+            requests.post(api_url("/quotes"), json=payload)
+            return dbc.Alert("Quote Created!", color="success")
+    except Exception as e:
+        return dbc.Alert(f"Error: {str(e)}", color="danger")
 
-    # Merge back into local store
-    if saved.get("id") is None:
-        # If API didn't assign an id, fake one
-        saved["id"] = max([q.get("id", 0) for q in quotes] + [0]) + 1
-
-    # Update or append
-    updated = False
-    for i, q in enumerate(quotes):
-        if q.get("id") == saved["id"]:
-            quotes[i] = saved
-            updated = True
-            break
-    if not updated:
-        quotes.append(saved)
-
-    return quotes, "Quote saved."
-
-
-# For local debugging you *could* run this directly:
-# if __name__ == "__main__":
-#     dash_app.run_server(debug=True, host="0.0.0.0", port=8050)
+# 7. Calc Total in Builder
+@dash_app.callback(
+    Output("qb-total-display", "children"),
+    [Input("item-1-qty", "value"), Input("item-1-price", "value"),
+     Input("item-2-qty", "value"), Input("item-2-price", "value")]
+)
+def calc_total(q1, p1, q2, p2):
+    t = (float(q1 or 0) * float(p1 or 0)) + (float(q2 or 0) * float(p2 or 0))
+    return f"${t:,.2f}"
