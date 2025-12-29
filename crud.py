@@ -2,7 +2,8 @@
 from sqlalchemy.orm import Session
 from decimal import Decimal
 from datetime import datetime
-from . import models, schemas
+import models, schemas           # ✅ absolute import
+
 
 
 # Customers
@@ -140,3 +141,4 @@ def get_activity_for_customer(db: Session, account_id: str, customer_id: str, li
         .limit(limit)
         .all()
     )
+
