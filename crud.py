@@ -141,4 +141,51 @@ def get_activity_for_customer(db: Session, account_id: str, customer_id: str, li
         .limit(limit)
         .all()
     )
+# ... existing code in crud.py ...
+
+def get_quote(db: Session, quote_id: str):
+    return db.query(models.Quote).filter(models.Quote.id == quote_id).first()
+
+def update_quote(db: Session, quote_id: str, data: schemas.QuoteUpdate):
+    quote = get_quote(db, quote_id)
+    if not quote:
+        return None
+
+    if data.title is not None:
+        quote.title = data.title
+    if data.status is not None:
+        quote.status = data.status
+
+    # If line items are provided, replace the old ones
+    if data.line_items is not None:
+        # Delete existing items
+        db.query(models.QuoteLineItem).filter(models.QuoteLineItem.quote_id == quote_id).delete()
+        
+        # Add new items
+        for idx, li in enumerate(data.line_items):
+            db.add(models.QuoteLineItem(
+                quote_id=quote.id,
+                type=li.type,
+                code=li.code,
+                description=li.description,
+                qty=li.qty,
+                unit_cost=li.unit_cost,
+                unit_price=li.unit_price,
+                position=li.position or idx
+            ))
+            
+    # Recalculate totals using the existing helper
+    _recalc_quote_totals(quote)
+    
+    db.commit()
+    db.refresh(quote)
+    return quote
+
+def delete_quote(db: Session, quote_id: str):
+    quote = get_quote(db, quote_id)
+    if quote:
+        db.delete(quote)
+        db.commit()
+        return True
+    return False
 
