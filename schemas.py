@@ -109,3 +109,9 @@ class ActivityEventOut(BaseModel):
 
     class Config:
         from_attributes = True
+# ... existing code in schemas.py ...
+
+class QuoteUpdate(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+    line_items: Optional[List[QuoteLineItemIn]] = None
