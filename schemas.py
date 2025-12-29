@@ -1,8 +1,6 @@
-# app/schemas.py
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
-
 
 # ---------- Customers ----------
 
@@ -12,7 +10,6 @@ class Address(BaseModel):
     state: str
     postal_code: str
 
-
 class CustomerCreate(BaseModel):
     location_id: str
     name: str
@@ -20,7 +17,6 @@ class CustomerCreate(BaseModel):
     email: Optional[str] = None
     billing_address: Optional[Address] = None
     service_address: Optional[Address] = None
-
 
 class CustomerOut(BaseModel):
     id: str
@@ -31,7 +27,6 @@ class CustomerOut(BaseModel):
 
     class Config:
         from_attributes = True
-
 
 # ---------- Leads ----------
 
@@ -44,7 +39,6 @@ class LeadAttributionIn(BaseModel):
     landing_url: Optional[str] = None
     referrer: Optional[str] = None
 
-
 class LeadCreate(BaseModel):
     location_id: str
     customer_id: Optional[str] = None
@@ -52,7 +46,6 @@ class LeadCreate(BaseModel):
     description: Optional[str] = None
     source: Optional[str] = None
     attribution: Optional[LeadAttributionIn] = None
-
 
 class LeadOut(BaseModel):
     id: str
@@ -63,7 +56,6 @@ class LeadOut(BaseModel):
 
     class Config:
         from_attributes = True
-
 
 # ---------- Quotes ----------
 
@@ -76,14 +68,20 @@ class QuoteLineItemIn(BaseModel):
     unit_price: float = 0
     position: int = 0
 
-
 class QuoteCreate(BaseModel):
-    location_id: str
-    customer_id: str
+    location_id: Optional[str] = "loc-demo"  # Default for demo
+    customer_id: Optional[str] = "cust-demo" # Default for demo
     title: str
     selling_tech_id: Optional[str] = None
-    line_items: List[QuoteLineItemIn]
+    line_items: List[QuoteLineItemIn] = []
+    status: Optional[str] = "draft"
 
+class QuoteUpdate(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+    line_items: Optional[List[QuoteLineItemIn]] = None
+    customer_id: Optional[str] = None
+    location_id: Optional[str] = None
 
 class QuoteOut(BaseModel):
     id: str
@@ -92,30 +90,11 @@ class QuoteOut(BaseModel):
     status: str
     total_price: float
     margin_percent: float
+    customer_name: Optional[str] = None # Added for easier UI display
     created_at: datetime
 
     class Config:
         from_attributes = True
-
-
-# ---------- Activity ----------
-
-class ActivityEventOut(BaseModel):
-    id: str
-    event_type: str
-    actor_type: str
-    created_at: datetime
-    payload: dict = Field(default_factory=dict)
-
-    class Config:
-        from_attributes = True
-# ... existing code in schemas.py ...
-
-class QuoteUpdate(BaseModel):
-    title: Optional[str] = None
-    status: Optional[str] = None
-    line_items: Optional[List[QuoteLineItemIn]] = None
-# ... (keep existing code) ...
 
 # ---------- Notes / Activity ----------
 
@@ -132,9 +111,12 @@ class NoteOut(BaseModel):
     class Config:
         from_attributes = True
 
-# Ensure QuoteUpdate is present (from previous fix)
-class QuoteUpdate(BaseModel):
-    title: Optional[str] = None
-    status: Optional[str] = None
-    line_items: Optional[List[QuoteLineItemIn]] = None
+class ActivityEventOut(BaseModel):
+    id: str
+    event_type: str
+    actor_type: str
+    created_at: datetime
+    payload: dict = Field(default_factory=dict)
 
+    class Config:
+        from_attributes = True
