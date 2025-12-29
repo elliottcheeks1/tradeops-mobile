@@ -1,3 +1,117 @@
+# main.py
+"""
+FastAPI entrypoint for TradeOps:
+- JSON API (health, quotes)
+- Mounts the Dash UI at /app
+"""
+
+from typing import List
+
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.wsgi import WSGIMiddleware
+from sqlalchemy.orm import Session
+
+# Local imports
+from database import SessionLocal, engine
+import models
+import crud
+import schemas
+from frontend_app import dash_app  # <- Dash instance
+
+
+# -------------------------------------------------------------------
+# Database init
+# -------------------------------------------------------------------
+models.Base.metadata.create_all(bind=engine)
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# -------------------------------------------------------------------
+# FastAPI app
+# -------------------------------------------------------------------
+app = FastAPI(
+    title="TradeOps API",
+    description="Backend API + Dash UI for home service contractors",
+    version="0.1.0",
+)
+
+# CORS (for future separate frontends / localhost testing)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # you can tighten this later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# -------------------------------------------------------------------
+# Health + root
+# -------------------------------------------------------------------
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+
+@app.get("/")
+def root():
+    """
+    Simple JSON landing page so you know the service is up.
+    """
+    return JSONResponse(
+        {
+            "service": "TradeOps API",
+            "status": "ok",
+            "docs": "/docs",
+            "endpoints": ["/health", "/quotes", "/app"],
+        }
+    )
+
+
+# -------------------------------------------------------------------
+# Quotes API (aligned with current crud.py)
+# -------------------------------------------------------------------
+# NOTE:
+# crud.list_quotes(db, account_id, customer_id=None)
+# crud.create_quote(db, account_id, data: schemas.QuoteCreate)
+
+DEMO_ACCOUNT_ID = "acct-demo-001"  # same as seed_data.py
+
+
+@app.get("/quotes", response_model=List[schemas.QuoteOut])
+def list_quotes(db: Session = Depends(get_db)):
+    """
+    List quotes for the demo account.
+    """
+    return crud.list_quotes(db, account_id=DEMO_ACCOUNT_ID)
+
+
+@app.post("/quotes", response_model=schemas.QuoteOut)
+def create_quote(quote: schemas.QuoteCreate, db: Session = Depends(get_db)):
+    """
+    Create a quote for the demo account.
+    """
+    return crud.create_quote(db, account_id=DEMO_ACCOUNT_ID, data=quote)
+
+
+# (No get_quote / update_quote / delete_quote for now, since
+#  those functions + QuoteUpdate schema are NOT defined yet.)
+
+
+# -------------------------------------------------------------------
+# Mount Dash UI at /app
+# -------------------------------------------------------------------
+# Dash will live at: https://tradeops.onrender.com/app
+app.mount("/app", WSGIMiddleware(dash_app.server))
 """
 FastAPI entrypoint for TradeOps:
 - JSON API (health, quotes)
@@ -119,3 +233,4 @@ def delete_quote(quote_id: int, db: Session = Depends(get_db)):
 # -------------------------------------------------------------------
 # Dash will live at: https://tradeops.onrender.com/app
 app.mount("/app", WSGIMiddleware(dash_app.server))
+
