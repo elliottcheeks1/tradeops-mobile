@@ -14,6 +14,13 @@ import uvicorn
 # --- CONFIG ---
 app = FastAPI(title="TradeOps Pro")
 templates = Jinja2Templates(directory="templates")
+
+# --- FIX: RESOLVE VUE.JS vs JINJA CONFLICT ---
+# We tell Python to look for [[ variable ]] instead of {{ variable }}
+# This lets Vue.js use {{ variable }} without crashing the server.
+templates.env.variable_start_string = '[['
+templates.env.variable_end_string = ']]'
+
 DB_FILE = "tradeops_ultimate_v2.db"
 
 # --- DATA MODELS ---
@@ -121,4 +128,4 @@ async def save_quote(quote: QuoteIn):
     return {"status": "success", "id": new_id}
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=10000, reload=True)
