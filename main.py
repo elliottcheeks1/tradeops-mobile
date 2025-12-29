@@ -25,6 +25,19 @@ from frontend_app import dash_app
 # Since we don't have login yet, we use the ID from seed_data.py
 DEMO_ACCOUNT_ID = "acct-demo-001" 
 
+
+# ---------- Notes API ----------
+
+@app.post("/quotes/{quote_id}/notes", response_model=schemas.NoteOut)
+def create_note(quote_id: str, note: schemas.NoteCreate, db: Session = Depends(get_db)):
+    """Add a note to a quote."""
+    # Using DEMO_ACCOUNT_ID from config
+    return crud.create_quote_note(db, quote_id, DEMO_ACCOUNT_ID, note)
+
+@app.get("/quotes/{quote_id}/notes", response_model=List[schemas.NoteOut])
+def get_notes(quote_id: str, db: Session = Depends(get_db)):
+    """Get all notes for a quote."""
+    return crud.get_quote_notes(db, quote_id)
 # -------------------------------------------------------------------
 # Database init
 # -------------------------------------------------------------------
@@ -139,3 +152,4 @@ def delete_quote(quote_id: str, db: Session = Depends(get_db)):
 # Mount Dash UI at /app
 # -------------------------------------------------------------------
 app.mount("/app", WSGIMiddleware(dash_app.server))
+
