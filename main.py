@@ -1,4 +1,3 @@
-# main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,22 +7,33 @@ app = FastAPI(
     description="Backend for TradeOps mobile & web apps",
 )
 
-# --- CORS (allow your future frontends to call this API) ---
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later (e.g. your domain)
+    allow_origins=["*"],  # tighten later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Simple healthcheck ---
+# --- Root (Render hits this) ---
+@app.get("/")
+def root():
+    return {
+        "service": "TradeOps API",
+        "status": "ok",
+        "docs": "/docs",
+        "endpoints": ["/health", "/quotes"],
+    }
+
+
+# --- Health ---
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-# --- Mock quotes endpoint (for now, no DB needed) ---
+# --- Mock quotes ---
 MOCK_QUOTES = [
     {
         "id": "QDEMO1",
@@ -42,5 +52,4 @@ MOCK_QUOTES = [
 
 @app.get("/quotes")
 def list_quotes():
-    """Temporary mock quotes-list until Neon is wired in."""
     return MOCK_QUOTES
