@@ -188,4 +188,45 @@ def delete_quote(db: Session, quote_id: str):
         db.commit()
         return True
     return False
+# ... (keep existing code) ...
+
+# ---------- Notes Logic ----------
+
+def create_quote_note(db: Session, quote_id: str, account_id: str, note: schemas.NoteCreate):
+    # We use the existing ActivityEvent table to store notes
+    event = models.ActivityEvent(
+        account_id=account_id,
+        quote_id=quote_id,
+        actor_type="user",
+        actor_id=note.author,  # Storing author name in actor_id for simplicity
+        event_type="note",
+        payload={"content": note.content}
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+def get_quote_notes(db: Session, quote_id: str):
+    events = (
+        db.query(models.ActivityEvent)
+        .filter(
+            models.ActivityEvent.quote_id == quote_id,
+            models.ActivityEvent.event_type == "note"
+        )
+        .order_by(models.ActivityEvent.created_at.desc())
+        .all()
+    )
+    # Convert ActivityEvent to NoteOut schema structure
+    notes = []
+    for e in events:
+        content = e.payload.get("content", "") if e.payload else ""
+        notes.append(schemas.NoteOut(
+            id=e.id,
+            content=content,
+            author=e.actor_id,
+            created_at=e.created_at
+        ))
+    return notes    
+
 
