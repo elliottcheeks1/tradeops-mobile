@@ -1,75 +1,9 @@
-# app/crud.py
 from sqlalchemy.orm import Session
 from decimal import Decimal
 from datetime import datetime
-import models, schemas           # ✅ absolute import
+import models, schemas
 
-
-
-# Customers
-
-def create_customer(db: Session, account_id: str, data: schemas.CustomerCreate) -> models.Customer:
-    c = models.Customer(
-        account_id=account_id,
-        location_id=data.location_id,
-        name=data.name,
-        phone=data.phone,
-        email=data.email,
-        billing_address=data.billing_address.model_dump() if data.billing_address else None,
-        service_address=data.service_address.model_dump() if data.service_address else None,
-    )
-    db.add(c)
-    db.commit()
-    db.refresh(c)
-    return c
-
-
-def list_customers(db: Session, account_id: str, search: str | None = None, limit: int = 50):
-    q = db.query(models.Customer).filter(models.Customer.account_id == account_id)
-    if search:
-        like = f"%{search}%"
-        q = q.filter(models.Customer.name.ilike(like))
-    return q.order_by(models.Customer.created_at.desc()).limit(limit).all()
-
-
-# Leads
-
-def create_lead(db: Session, account_id: str, data: schemas.LeadCreate) -> models.Lead:
-    lead = models.Lead(
-        account_id=account_id,
-        location_id=data.location_id,
-        customer_id=data.customer_id,
-        title=data.title,
-        description=data.description,
-        source=data.source,
-    )
-    db.add(lead)
-    db.flush()  # get lead.id
-
-    if data.attribution:
-        attrib = models.LeadAttribution(
-            lead_id=lead.id,
-            **data.attribution.model_dump(exclude_unset=True)
-        )
-        db.add(attrib)
-
-    # Activity event
-    activity = models.ActivityEvent(
-        account_id=account_id,
-        customer_id=data.customer_id,
-        lead_id=lead.id,
-        actor_type="user",
-        event_type="lead.created",
-        payload={"title": data.title, "source": data.source},
-    )
-    db.add(activity)
-
-    db.commit()
-    db.refresh(lead)
-    return lead
-
-
-# Quotes
+# ---------- Helper ----------
 
 def _recalc_quote_totals(quote: models.Quote):
     total_cost = Decimal("0")
@@ -82,6 +16,29 @@ def _recalc_quote_totals(quote: models.Quote):
     quote.margin_percent = ((total_price - total_cost) / total_price * 100
                             if total_price > 0 else 0)
 
+# ---------- Quotes ----------
+
+def list_quotes(db: Session, account_id: str, customer_id: str | None = None):
+    q = db.query(models.Quote).filter(models.Quote.account_id == account_id)
+    if customer_id:
+        q = q.filter(models.Quote.customer_id == customer_id)
+    
+    quotes = q.order_by(models.Quote.created_at.desc()).all()
+    
+    # Enrich with customer name for the UI
+    for quote in quotes:
+        if quote.customer:
+            quote.customer_name = quote.customer.name
+        else:
+            quote.customer_name = "Unknown Client"
+            
+    return quotes
+
+def get_quote(db: Session, quote_id: str):
+    quote = db.query(models.Quote).filter(models.Quote.id == quote_id).first()
+    if quote and quote.customer:
+        quote.customer_name = quote.customer.name
+    return quote
 
 def create_quote(db: Session, account_id: str, data: schemas.QuoteCreate) -> models.Quote:
     quote = models.Quote(
@@ -90,7 +47,7 @@ def create_quote(db: Session, account_id: str, data: schemas.QuoteCreate) -> mod
         customer_id=data.customer_id,
         title=data.title,
         selling_tech_id=data.selling_tech_id,
-        status="draft",
+        status=data.status or "draft",
     )
     db.add(quote)
     db.flush()
@@ -108,46 +65,12 @@ def create_quote(db: Session, account_id: str, data: schemas.QuoteCreate) -> mod
         ))
 
     _recalc_quote_totals(quote)
-
-    db.add(models.ActivityEvent(
-        account_id=account_id,
-        customer_id=data.customer_id,
-        quote_id=quote.id,
-        actor_type="user",
-        event_type="quote.created",
-        payload={"title": data.title}
-    ))
-
     db.commit()
     db.refresh(quote)
     return quote
 
-
-def list_quotes(db: Session, account_id: str, customer_id: str | None = None):
-    q = db.query(models.Quote).filter(models.Quote.account_id == account_id)
-    if customer_id:
-        q = q.filter(models.Quote.customer_id == customer_id)
-    return q.order_by(models.Quote.created_at.desc()).all()
-
-
-def get_activity_for_customer(db: Session, account_id: str, customer_id: str, limit: int = 50):
-    return (
-        db.query(models.ActivityEvent)
-        .filter(
-            models.ActivityEvent.account_id == account_id,
-            models.ActivityEvent.customer_id == customer_id,
-        )
-        .order_by(models.ActivityEvent.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-# ... existing code in crud.py ...
-
-def get_quote(db: Session, quote_id: str):
-    return db.query(models.Quote).filter(models.Quote.id == quote_id).first()
-
 def update_quote(db: Session, quote_id: str, data: schemas.QuoteUpdate):
-    quote = get_quote(db, quote_id)
+    quote = db.query(models.Quote).filter(models.Quote.id == quote_id).first()
     if not quote:
         return None
 
@@ -156,11 +79,9 @@ def update_quote(db: Session, quote_id: str, data: schemas.QuoteUpdate):
     if data.status is not None:
         quote.status = data.status
 
-    # If line items are provided, replace the old ones
     if data.line_items is not None:
-        # Delete existing items
+        # Clear old items
         db.query(models.QuoteLineItem).filter(models.QuoteLineItem.quote_id == quote_id).delete()
-        
         # Add new items
         for idx, li in enumerate(data.line_items):
             db.add(models.QuoteLineItem(
@@ -173,32 +94,70 @@ def update_quote(db: Session, quote_id: str, data: schemas.QuoteUpdate):
                 unit_price=li.unit_price,
                 position=li.position or idx
             ))
-            
-    # Recalculate totals using the existing helper
-    _recalc_quote_totals(quote)
+        _recalc_quote_totals(quote)
     
     db.commit()
     db.refresh(quote)
     return quote
 
 def delete_quote(db: Session, quote_id: str):
-    quote = get_quote(db, quote_id)
+    quote = db.query(models.Quote).filter(models.Quote.id == quote_id).first()
     if quote:
         db.delete(quote)
         db.commit()
         return True
     return False
-# ... (keep existing code) ...
 
-# ---------- Notes Logic ----------
+# ---------- Customers ----------
+
+def create_customer(db: Session, account_id: str, data: schemas.CustomerCreate) -> models.Customer:
+    c = models.Customer(
+        account_id=account_id,
+        location_id=data.location_id,
+        name=data.name,
+        phone=data.phone,
+        email=data.email,
+        billing_address=data.billing_address.model_dump() if data.billing_address else None,
+        service_address=data.service_address.model_dump() if data.service_address else None,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return c
+
+# ---------- Leads ----------
+
+def create_lead(db: Session, account_id: str, data: schemas.LeadCreate) -> models.Lead:
+    lead = models.Lead(
+        account_id=account_id,
+        location_id=data.location_id,
+        customer_id=data.customer_id,
+        title=data.title,
+        description=data.description,
+        source=data.source,
+    )
+    db.add(lead)
+    db.flush()
+
+    if data.attribution:
+        attrib = models.LeadAttribution(
+            lead_id=lead.id,
+            **data.attribution.model_dump(exclude_unset=True)
+        )
+        db.add(attrib)
+
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+# ---------- Notes / Activity ----------
 
 def create_quote_note(db: Session, quote_id: str, account_id: str, note: schemas.NoteCreate):
-    # We use the existing ActivityEvent table to store notes
     event = models.ActivityEvent(
         account_id=account_id,
         quote_id=quote_id,
         actor_type="user",
-        actor_id=note.author,  # Storing author name in actor_id for simplicity
+        actor_id=note.author,
         event_type="note",
         payload={"content": note.content}
     )
@@ -217,7 +176,6 @@ def get_quote_notes(db: Session, quote_id: str):
         .order_by(models.ActivityEvent.created_at.desc())
         .all()
     )
-    # Convert ActivityEvent to NoteOut schema structure
     notes = []
     for e in events:
         content = e.payload.get("content", "") if e.payload else ""
@@ -227,6 +185,4 @@ def get_quote_notes(db: Session, quote_id: str):
             author=e.actor_id,
             created_at=e.created_at
         ))
-    return notes    
-
-
+    return notes
