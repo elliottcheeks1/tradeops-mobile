@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import uuid
 
+# We stick with V4 to maintain your schema, but we will force-seed data
 DB_NAME = "tradeops_v4.db"
 
 def init_db():
@@ -61,34 +62,68 @@ def init_db():
         unit_price REAL,
         quantity REAL
     )''')
+    
+    conn.commit()
+    seed_data(conn) # Force check for data
+    conn.close()
 
-    # Seed Data
+def seed_data(conn):
+    c = conn.cursor()
+    
+    # --- SEED LABOR ---
     c.execute("SELECT count(*) FROM labor_rates")
     if c.fetchone()[0] == 0:
-        c.executemany("INSERT INTO labor_rates VALUES (?,?,?)", [
+        print("Seeding Labor Rates...")
+        labor = [
             ("Apprentice", 20.0, 65.0),
-            ("Journeyman", 35.0, 95.0),
-            ("Master Tech", 55.0, 150.0)
-        ])
-        c.executemany("INSERT INTO parts_catalog VALUES (?,?,?,?)", [
-            ("P1", "Capacitor 45/5", 12.0, 85.0),
-            ("P2", "Contactor 30A", 18.0, 125.0),
-            ("P3", "R410a (lb)", 15.0, 85.0)
-        ])
+            ("Journeyman Tech", 35.0, 95.0),
+            ("Master Electrician", 55.0, 150.0),
+            ("HVAC Lead", 45.0, 125.0)
+        ]
+        c.executemany("INSERT INTO labor_rates VALUES (?,?,?)", labor)
 
+    # --- SEED PARTS ---
+    c.execute("SELECT count(*) FROM parts_catalog")
+    if c.fetchone()[0] == 0:
+        print("Seeding Parts Catalog...")
+        parts = [
+            ("P101", "Capacitor 45/5 MFD", 12.50, 85.00),
+            ("P102", "Contactor 2-Pole 30A", 18.00, 125.00),
+            ("P103", "R410a Refrigerant (lb)", 15.00, 95.00),
+            ("P104", "Hard Start Kit (Compressor)", 35.00, 245.00),
+            ("P105", "Universal Control Board", 110.00, 450.00),
+            ("P201", "PVC Pipe 2 inch (10ft)", 8.00, 25.00),
+            ("P202", "Wax Ring Kit", 4.00, 18.00),
+            ("P203", "Garbage Disposal 1/2 HP", 85.00, 275.00),
+            ("P301", "Breaker 20 Amp", 9.00, 35.00),
+            ("P302", "GFCI Outlet", 15.00, 65.00)
+        ]
+        c.executemany("INSERT INTO parts_catalog VALUES (?,?,?,?)", parts)
+
+    # --- SEED CUSTOMERS ---
+    c.execute("SELECT count(*) FROM customers")
+    if c.fetchone()[0] == 0:
+        print("Seeding Customers...")
+        customers = [
+            ("C001", "Walmart Supercenter #482", "8800 Retail Pkwy", "Dallas", "TX", "75001", "555-0101", "mgr@walmart.com"),
+            ("C002", "Mrs. Robinson", "123 Graduate Ln", "Austin", "TX", "78701", "555-0999", "mrs.robinson@gmail.com"),
+            ("C003", "Burger King #42", "450 Whopper Way", "Houston", "TX", "77002", "555-0200", "bk42@franchise.com"),
+            ("C004", "City Hall Annex", "1 Main St", "Texas City", "TX", "77590", "555-1000", "facilities@city.gov")
+        ]
+        c.executemany("INSERT INTO customers VALUES (?,?,?,?,?,?,?,?)", customers)
+        
     conn.commit()
-    conn.close()
 
 # --- DATA ACCESS ---
 
 def get_customers():
-    return pd.read_sql("SELECT * FROM customers", sqlite3.connect(DB_NAME))
+    return pd.read_sql("SELECT * FROM customers ORDER BY name", sqlite3.connect(DB_NAME))
 
 def get_parts():
-    return pd.read_sql("SELECT * FROM parts_catalog", sqlite3.connect(DB_NAME))
+    return pd.read_sql("SELECT * FROM parts_catalog ORDER BY name", sqlite3.connect(DB_NAME))
 
 def get_labor():
-    return pd.read_sql("SELECT * FROM labor_rates", sqlite3.connect(DB_NAME))
+    return pd.read_sql("SELECT * FROM labor_rates ORDER BY role", sqlite3.connect(DB_NAME))
 
 def add_customer(name, street, city, state, zip_code, phone):
     conn = sqlite3.connect(DB_NAME)
@@ -110,6 +145,7 @@ def save_new_quote(cust_id, job_type, estimator, items):
     margin = ((total_price - total_cost) / total_price * 100) if total_price > 0 else 0
     now = datetime.now().strftime("%Y-%m-%d")
     
+    # New quotes default to follow up TODAY so they show in the list
     conn.execute("INSERT INTO quotes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", 
                  (qid, cust_id, job_type, estimator, "Open", now, now, now, "Needs Call", total_price, total_cost, margin))
     
@@ -160,7 +196,6 @@ def get_tech_history(estimator_name=None):
     return pd.read_sql(query, conn)
 
 def get_followup_queue():
-    # Only show open quotes that need attention
     query = """
     SELECT q.quote_id, c.name, c.phone, q.total_price, q.next_followup_date, q.followup_status, q.estimator
     FROM quotes q JOIN customers c ON q.customer_id = c.customer_id
