@@ -17,7 +17,7 @@ templates = Jinja2Templates(directory="templates")
 templates.env.variable_start_string = '[['
 templates.env.variable_end_string = ']]'
 
-DB_FILE = "tradeops_v5.db"
+DB_FILE = "tradeops_v6.db"
 
 # ---------- MODELS ----------
 class LoginRequest(BaseModel):
@@ -46,11 +46,17 @@ class QuoteIn(BaseModel):
 class StatusUpdate(BaseModel):
     status: str
 
-# [NEW] Model for assigning a job
 class AssignRequest(BaseModel):
     quote_id: str
     tech_username: str
     scheduled_date: str
+
+# [NEW] Model for completing a job
+class JobCompletion(BaseModel):
+    job_id: str
+    final_items: List[QuoteItem]
+    total: float
+    notes: str
 
 # ---------- DB INIT ----------
 def init_db():
@@ -80,6 +86,7 @@ def init_db():
         cur.executemany('INSERT INTO catalog VALUES (?,?,?,?)', [
             ("P-101", "16 SEER Condenser", "Part", 2800.00),
             ("P-102", "Smart Thermostat", "Part", 250.00),
+            ("P-200", "R-410A Refrigerant (lb)", "Part", 85.00),
             ("L-001", "Master Labor (Hr)", "Labor", 185.00),
             ("S-500", "System Tune-up", "Service", 150.00)
         ])
@@ -141,13 +148,10 @@ async def get_dashboard():
     active_jobs = len([q for q in quotes if q['status'] in ('Scheduled', 'In Progress')])
     pending = len([q for q in quotes if q['status'] == 'Draft'])
     
-    # Calculate avg ticket
     denom = len([q for q in quotes if q['status'] != 'Draft'])
     avg_ticket = (total_rev / denom) if denom > 0 else 0
 
     recent = sorted(quotes, key=lambda x: x['created_at'], reverse=True)[:5]
-    
-    # Today's schedule
     today_str = date.today().isoformat()
     schedule = [q for q in quotes if q.get('scheduled_date') == today_str]
 
@@ -168,38 +172,27 @@ async def get_quotes():
         ORDER BY q.created_at DESC
     """)
 
-# [NEW] Dispatch Data Endpoint
 @app.get("/api/dispatch-data")
 async def get_dispatch_data():
-    # 1. Unscheduled Bucket: Approved but no Tech assigned
     unscheduled = query_db("""
         SELECT q.*, c.name as customer_name, c.address 
-        FROM quotes q 
-        JOIN customers c ON q.customer_id = c.id 
+        FROM quotes q JOIN customers c ON q.customer_id = c.id 
         WHERE q.status = 'Approved' AND (q.tech IS NULL OR q.tech = '')
     """)
-    
-    # 2. Get Techs
     techs = query_db("SELECT username, full_name FROM users WHERE role = 'tech'")
-    
-    # 3. Get Scheduled Jobs (Active)
     scheduled = query_db("""
         SELECT q.*, c.name as customer_name 
-        FROM quotes q 
-        JOIN customers c ON q.customer_id = c.id 
+        FROM quotes q JOIN customers c ON q.customer_id = c.id 
         WHERE q.tech IS NOT NULL AND q.tech != '' AND q.status != 'Completed'
         ORDER BY q.scheduled_date
     """)
-    
     return {"unscheduled": unscheduled, "techs": techs, "scheduled": scheduled}
 
-# [NEW] Tech Specific Jobs
 @app.get("/api/my-jobs")
 async def get_my_jobs(username: str):
     return query_db("""
-        SELECT q.*, c.name as customer_name, c.address, c.phone
-        FROM quotes q 
-        JOIN customers c ON q.customer_id = c.id 
+        SELECT q.*, c.name as customer_name, c.address, c.phone, c.email
+        FROM quotes q JOIN customers c ON q.customer_id = c.id 
         WHERE q.tech = ? AND q.status != 'Completed'
         ORDER BY q.scheduled_date
     """, (username,))
@@ -230,11 +223,23 @@ async def update_quote_status(id: str, update: StatusUpdate):
     execute_db("UPDATE quotes SET status=? WHERE id=?", (update.status, id))
     return {"status": "updated"}
 
-# [NEW] Assign Job Endpoint
 @app.post("/api/dispatch/assign")
 async def assign_job(req: AssignRequest):
     execute_db("UPDATE quotes SET tech=?, scheduled_date=?, status='Scheduled' WHERE id=?", 
                (req.tech_username, req.scheduled_date, req.quote_id))
+    return {"status": "success"}
+
+# [NEW] Complete Job Endpoint
+@app.post("/api/jobs/complete")
+async def complete_job(job: JobCompletion):
+    items_json = json.dumps([i.dict() for i in job.final_items])
+    # Append the new completion notes to existing notes if needed, or just overwrite. 
+    # For now, we will simply update the notes field.
+    execute_db("""
+        UPDATE quotes 
+        SET items_json=?, total=?, notes=?, status='Completed' 
+        WHERE id=?
+    """, (items_json, job.total, job.notes, job.job_id))
     return {"status": "success"}
 
 if __name__ == "__main__":
