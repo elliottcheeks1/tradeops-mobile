@@ -17,7 +17,7 @@ templates = Jinja2Templates(directory="templates")
 templates.env.variable_start_string = '[['
 templates.env.variable_end_string = ']]'
 
-DB_FILE = "tradeops_v3.db"
+DB_FILE = "tradeops_v5.db"
 
 # ---------- MODELS ----------
 class LoginRequest(BaseModel):
@@ -46,6 +46,12 @@ class QuoteIn(BaseModel):
 class StatusUpdate(BaseModel):
     status: str
 
+# [NEW] Model for assigning a job
+class AssignRequest(BaseModel):
+    quote_id: str
+    tech_username: str
+    scheduled_date: str
+
 # ---------- DB INIT ----------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -57,28 +63,30 @@ def init_db():
 
     # 2. Quotes
     cur.execute('''CREATE TABLE IF NOT EXISTS quotes (
-        id TEXT PRIMARY KEY, customer_id TEXT, status TEXT, created_at TEXT, items_json TEXT, total REAL, notes TEXT)''')
+        id TEXT PRIMARY KEY, customer_id TEXT, status TEXT, created_at TEXT, items_json TEXT, total REAL, notes TEXT, 
+        scheduled_date TEXT, tech TEXT)''')
 
     # 3. Catalog
     cur.execute('''CREATE TABLE IF NOT EXISTS catalog (
         id TEXT PRIMARY KEY, name TEXT, type TEXT, price REAL)''')
 
-    # 4. Users (New for Roles)
+    # 4. Users
     cur.execute('''CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY, password TEXT, role TEXT, full_name TEXT)''')
     
     # Seed Data
     cur.execute('SELECT count(*) FROM catalog')
     if cur.fetchone()[0] == 0:
-        # Seed Catalog
         cur.executemany('INSERT INTO catalog VALUES (?,?,?,?)', [
             ("P-101", "16 SEER Condenser", "Part", 2800.00),
-            ("L-001", "Master Labor (Hr)", "Labor", 185.00)
+            ("P-102", "Smart Thermostat", "Part", 250.00),
+            ("L-001", "Master Labor (Hr)", "Labor", 185.00),
+            ("S-500", "System Tune-up", "Service", 150.00)
         ])
-        # Seed Users (admin/admin and tech/tech)
         cur.executemany('INSERT INTO users VALUES (?,?,?,?)', [
             ("admin", "admin", "admin", "Elliott Cheeks"),
-            ("tech", "tech", "tech", "Sarah Jenkins")
+            ("tech", "tech", "tech", "Sarah Jenkins"),
+            ("mike", "mike", "tech", "Mike Rivera") 
         ])
         conn.commit()
     conn.close()
@@ -116,8 +124,7 @@ async def read_root(request: Request):
 @app.post("/api/login")
 async def login(creds: LoginRequest):
     user = query_db("SELECT * FROM users WHERE username = ? AND password = ?", (creds.username, creds.password), one=True)
-    if user:
-        return {"status": "success", "user": user}
+    if user: return {"status": "success", "user": user}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.get("/api/init-data")
@@ -129,17 +136,28 @@ async def get_init_data():
 
 @app.get("/api/dashboard")
 async def get_dashboard():
-    quotes = query_db("SELECT * FROM quotes")
-    total_rev = sum(q['total'] for q in quotes) if quotes else 0
-    recent = query_db("""
-        SELECT q.id, c.name, q.total, q.status, q.created_at 
-        FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id 
-        ORDER BY q.created_at DESC LIMIT 5
-    """)
+    quotes = query_db("SELECT q.*, c.name as customer_name FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id")
+    total_rev = sum(q['total'] for q in quotes if q['status'] != 'Draft')
+    active_jobs = len([q for q in quotes if q['status'] in ('Scheduled', 'In Progress')])
+    pending = len([q for q in quotes if q['status'] == 'Draft'])
+    
+    # Calculate avg ticket
+    denom = len([q for q in quotes if q['status'] != 'Draft'])
+    avg_ticket = (total_rev / denom) if denom > 0 else 0
+
+    recent = sorted(quotes, key=lambda x: x['created_at'], reverse=True)[:5]
+    
+    # Today's schedule
+    today_str = date.today().isoformat()
+    schedule = [q for q in quotes if q.get('scheduled_date') == today_str]
+
     return {
         "revenue": total_rev,
-        "pending": len([q for q in quotes if q['status'] == 'Draft']),
-        "recent": recent
+        "active_jobs": active_jobs,
+        "pending": pending,
+        "avg_ticket": avg_ticket,
+        "recent": recent,
+        "schedule": schedule
     }
 
 @app.get("/api/quotes")
@@ -149,6 +167,42 @@ async def get_quotes():
         FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id 
         ORDER BY q.created_at DESC
     """)
+
+# [NEW] Dispatch Data Endpoint
+@app.get("/api/dispatch-data")
+async def get_dispatch_data():
+    # 1. Unscheduled Bucket: Approved but no Tech assigned
+    unscheduled = query_db("""
+        SELECT q.*, c.name as customer_name, c.address 
+        FROM quotes q 
+        JOIN customers c ON q.customer_id = c.id 
+        WHERE q.status = 'Approved' AND (q.tech IS NULL OR q.tech = '')
+    """)
+    
+    # 2. Get Techs
+    techs = query_db("SELECT username, full_name FROM users WHERE role = 'tech'")
+    
+    # 3. Get Scheduled Jobs (Active)
+    scheduled = query_db("""
+        SELECT q.*, c.name as customer_name 
+        FROM quotes q 
+        JOIN customers c ON q.customer_id = c.id 
+        WHERE q.tech IS NOT NULL AND q.tech != '' AND q.status != 'Completed'
+        ORDER BY q.scheduled_date
+    """)
+    
+    return {"unscheduled": unscheduled, "techs": techs, "scheduled": scheduled}
+
+# [NEW] Tech Specific Jobs
+@app.get("/api/my-jobs")
+async def get_my_jobs(username: str):
+    return query_db("""
+        SELECT q.*, c.name as customer_name, c.address, c.phone
+        FROM quotes q 
+        JOIN customers c ON q.customer_id = c.id 
+        WHERE q.tech = ? AND q.status != 'Completed'
+        ORDER BY q.scheduled_date
+    """, (username,))
 
 @app.post("/api/customers")
 async def create_customer(cust: CustomerIn):
@@ -167,7 +221,7 @@ async def update_customer(id: str, cust: CustomerIn):
 async def save_quote(quote: QuoteIn):
     new_id = f"Q-{random.randint(1000, 9999)}"
     items_json = json.dumps([i.dict() for i in quote.items])
-    execute_db("INSERT INTO quotes VALUES (?, ?, ?, ?, ?, ?, ?)",
+    execute_db("INSERT INTO quotes (id, customer_id, status, created_at, items_json, total, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
                (new_id, quote.customer_id, "Draft", date.today().isoformat(), items_json, quote.total, quote.notes))
     return {"status": "success", "id": new_id}
 
@@ -175,6 +229,13 @@ async def save_quote(quote: QuoteIn):
 async def update_quote_status(id: str, update: StatusUpdate):
     execute_db("UPDATE quotes SET status=? WHERE id=?", (update.status, id))
     return {"status": "updated"}
+
+# [NEW] Assign Job Endpoint
+@app.post("/api/dispatch/assign")
+async def assign_job(req: AssignRequest):
+    execute_db("UPDATE quotes SET tech=?, scheduled_date=?, status='Scheduled' WHERE id=?", 
+               (req.tech_username, req.scheduled_date, req.quote_id))
+    return {"status": "success"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
