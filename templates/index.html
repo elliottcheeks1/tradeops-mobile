@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TradeOps Field</title>
+    <title>TradeOps Mobile</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -13,272 +13,265 @@
             theme: {
                 extend: {
                     fontFamily: { sans: ['Inter', 'sans-serif'] },
-                    colors: {
-                        primary: '#2563EB',
-                        secondary: '#475569',
-                        success: '#10B981',
-                        surface: '#F8FAFC'
-                    }
+                    colors: { primary: '#2563EB', surface: '#F8FAFC' }
                 }
             }
         }
     </script>
     <style>
-        .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
-        .fade-enter-from, .fade-leave-to { opacity: 0; }
-        .loader {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #3498db;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
         [v-cloak] { display: none; }
+        .slide-enter-active, .slide-leave-active { transition: transform 0.3s ease; }
+        .slide-enter-from, .slide-leave-to { transform: translateX(-100%); }
     </style>
 </head>
-<body class="bg-surface text-slate-800 h-screen flex overflow-hidden">
+<body class="bg-surface text-slate-800 h-screen overflow-hidden">
 
-<div id="app" class="flex w-full h-full" v-cloak>
+<div id="app" class="h-full flex flex-col" v-cloak>
 
-    <aside class="w-64 bg-white border-r border-slate-200 hidden md:flex flex-col z-20 shadow-sm transition-all duration-300">
-        <div class="h-16 flex items-center px-6 border-b border-slate-100">
-            <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-white mr-3">
-                <i class="fa-solid fa-bolt"></i>
+    <div v-if="!user" class="fixed inset-0 bg-slate-100 z-50 flex items-center justify-center p-4">
+        <div class="bg-white p-8 rounded-xl shadow-xl w-full max-w-sm">
+            <div class="text-center mb-6">
+                <div class="w-12 h-12 bg-primary text-white rounded-lg flex items-center justify-center mx-auto text-xl mb-2">
+                    <i class="fa-solid fa-bolt"></i>
+                </div>
+                <h1 class="text-2xl font-bold text-slate-800">TradeOps Login</h1>
+                <p class="text-sm text-slate-500">Enter your credentials</p>
             </div>
-            <span class="font-bold text-lg tracking-tight">TradeOps</span>
-        </div>
-
-        <div class="px-4 pt-4 pb-2 text-xs font-semibold text-slate-400 uppercase">
-            Main
-        </div>
-        <nav class="flex-1 px-4 space-y-1">
-            <a href="#" @click="setView('dashboard')" :class="view === 'dashboard' ? 'bg-blue-50 text-primary' : 'text-slate-600 hover:bg-slate-50'" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition">
-                <i class="fa-solid fa-chart-pie w-5 text-center"></i> Dashboard
-            </a>
-            
-            <div class="pt-4 text-xs font-semibold text-slate-400 uppercase">Work</div>
-            
-            <a href="#" @click="setView('quotes')" :class="view === 'quotes' ? 'bg-blue-50 text-primary' : 'text-slate-600 hover:bg-slate-50'" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition">
-                <i class="fa-solid fa-file-invoice-dollar w-5 text-center"></i> Quotes
-            </a>
-            <a href="#" @click="setView('builder')" :class="view === 'builder' ? 'bg-blue-50 text-primary' : 'text-slate-600 hover:bg-slate-50'" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition">
-                <i class="fa-solid fa-pen-ruler w-5 text-center"></i> Builder
-            </a>
-            <a href="#" @click="setView('accounts')" :class="view === 'accounts' ? 'bg-blue-50 text-primary' : 'text-slate-600 hover:bg-slate-50'" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition">
-                <i class="fa-solid fa-users w-5 text-center"></i> Customers
-            </a>
-        </nav>
-
-        <div class="p-4 border-t border-slate-100 flex items-center gap-3 text-sm">
-            <div class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center font-semibold text-slate-600">EC</div>
-            <div class="leading-tight">
-                <div class="font-semibold text-slate-800 text-sm">Elliott Cheeks</div>
-                <div class="text-xs text-slate-400">Sr. Product Owner</div>
-            </div>
-        </div>
-    </aside>
-
-    <main class="flex-1 flex flex-col h-full relative overflow-hidden">
-        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm z-10 shrink-0">
-            <h1 class="text-xl font-bold text-slate-800">
-                <span v-if="view === 'dashboard'">Dashboard Overview</span>
-                <span v-else class="capitalize">{{ view }}</span>
-            </h1>
-            <div class="flex items-center gap-4">
-                <div v-if="loading" class="loader"></div>
-                <button @click="setView('builder')" class="bg-primary hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition">
-                    + New Quote
+            <form @submit.prevent="login">
+                <input v-model="loginForm.username" class="w-full border p-3 rounded-lg mb-3" placeholder="Username (admin or tech)">
+                <input v-model="loginForm.password" type="password" class="w-full border p-3 rounded-lg mb-4" placeholder="Password">
+                <button type="submit" class="w-full bg-primary text-white py-3 rounded-lg font-bold shadow-lg hover:bg-blue-600 transition">
+                    Sign In
                 </button>
+            </form>
+            <div class="mt-4 text-xs text-center text-slate-400">
+                Try: <b>admin / admin</b> or <b>tech / tech</b>
             </div>
-        </header>
+        </div>
+    </div>
 
-        <div class="flex-1 overflow-auto p-8 relative">
+    <div v-else class="flex h-full relative">
+        
+        <div v-if="mobileMenu" @click="mobileMenu = false" class="fixed inset-0 bg-black/50 z-30 md:hidden"></div>
 
-            <div v-if="view === 'dashboard'" class="space-y-6 max-w-6xl mx-auto">
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <p class="text-xs font-medium text-slate-500 uppercase">Total Revenue</p>
-                        <h3 class="text-3xl font-bold text-slate-800 mt-3">${{ dashboard.revenue.toLocaleString() }}</h3>
-                    </div>
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <p class="text-xs font-medium text-slate-500 uppercase">Pending Quotes</p>
-                        <h3 class="text-3xl font-bold text-slate-800 mt-3">{{ dashboard.pending }}</h3>
-                    </div>
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <p class="text-xs font-medium text-slate-500 uppercase">Avg Ticket</p>
-                        <h3 class="text-3xl font-bold text-slate-800 mt-3">${{ dashboard.avg_ticket.toFixed(0) }}</h3>
-                    </div>
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <p class="text-xs font-medium text-slate-500 uppercase">Active Jobs</p>
-                        <h3 class="text-3xl font-bold text-slate-800 mt-3">0</h3>
-                    </div>
+        <aside :class="mobileMenu ? 'translate-x-0' : '-translate-x-full md:translate-x-0'" 
+               class="fixed inset-y-0 left-0 w-64 bg-white border-r border-slate-200 z-40 transition-transform duration-300 md:relative md:flex flex-col shadow-xl md:shadow-none">
+            
+            <div class="h-16 flex items-center px-6 border-b border-slate-100 justify-between">
+                <div class="flex items-center font-bold text-lg tracking-tight">
+                    <span class="text-primary mr-2"><i class="fa-solid fa-bolt"></i></span> TradeOps
                 </div>
-
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div class="px-6 py-4 border-b border-slate-100 font-bold text-slate-700">Recent Activity</div>
-                    <table class="w-full text-sm text-left text-slate-600">
-                        <thead class="bg-slate-50 text-xs uppercase text-slate-500">
-                            <tr>
-                                <th class="px-6 py-3">Customer</th>
-                                <th class="px-6 py-3">Status</th>
-                                <th class="px-6 py-3">Amount</th>
-                                <th class="px-6 py-3">Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="item in dashboard.recent" :key="item.id" class="border-b border-slate-50">
-                                <td class="px-6 py-4 font-medium text-slate-900">{{ item.name || 'Unknown' }}</td>
-                                <td class="px-6 py-4"><span class="bg-blue-50 text-blue-700 text-xs px-2 py-1 rounded-full">{{ item.status }}</span></td>
-                                <td class="px-6 py-4 font-bold">${{ item.total.toFixed(2) }}</td>
-                                <td class="px-6 py-4 text-xs text-slate-400">{{ item.created_at }}</td>
-                            </tr>
-                            <tr v-if="!dashboard.recent || dashboard.recent.length === 0">
-                                <td colspan="4" class="px-6 py-8 text-center text-slate-400">No recent activity found.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
+                <button @click="mobileMenu = false" class="md:hidden text-slate-400"><i class="fa-solid fa-times"></i></button>
             </div>
 
-            <div v-if="view === 'quotes'" class="max-w-6xl mx-auto">
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <table class="w-full text-sm text-left text-slate-600">
-                        <thead class="bg-slate-50 text-xs uppercase text-slate-500">
-                            <tr>
-                                <th class="px-6 py-3">ID</th>
-                                <th class="px-6 py-3">Customer</th>
-                                <th class="px-6 py-3 text-right">Amount</th>
-                                <th class="px-6 py-3">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="q in quotesList" :key="q.id" class="border-b border-slate-50 hover:bg-slate-50">
-                                <td class="px-6 py-4 font-mono text-primary">{{ q.id }}</td>
-                                <td class="px-6 py-4">{{ q.customer_name }}</td>
-                                <td class="px-6 py-4 text-right font-bold">${{ q.total.toFixed(2) }}</td>
-                                <td class="px-6 py-4">{{ q.status }}</td>
-                            </tr>
-                            <tr v-if="quotesList.length === 0">
-                                <td colspan="4" class="px-6 py-8 text-center text-slate-400">No quotes yet.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            <nav class="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+                <a href="#" @click="setView('dashboard')" :class="navClass('dashboard')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
+                    <i class="fa-solid fa-chart-pie w-5 text-center"></i> Dashboard
+                </a>
 
-            <div v-if="view === 'accounts'" class="max-w-6xl mx-auto">
-                <div class="flex justify-end mb-4">
-                    <button @click="showModal = true" class="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 shadow-sm">
-                        + Add Account
+                <template v-if="user.role === 'admin'">
+                    <div class="pt-4 pb-2 text-xs font-semibold text-slate-400 uppercase">Management</div>
+                    <a href="#" @click="setView('quotes')" :class="navClass('quotes')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
+                        <i class="fa-solid fa-file-invoice-dollar w-5 text-center"></i> Quotes
+                    </a>
+                    <a href="#" @click="setView('builder')" :class="navClass('builder')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
+                        <i class="fa-solid fa-pen-ruler w-5 text-center"></i> Builder
+                    </a>
+                    <a href="#" @click="setView('accounts')" :class="navClass('accounts')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
+                        <i class="fa-solid fa-users w-5 text-center"></i> Customers
+                    </a>
+                </template>
+
+                <template v-if="user.role === 'tech'">
+                    <div class="pt-4 pb-2 text-xs font-semibold text-slate-400 uppercase">Field Work</div>
+                    <a href="#" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50">
+                        <i class="fa-solid fa-calendar-check w-5 text-center"></i> My Schedule
+                    </a>
+                </template>
+            </nav>
+
+            <div class="p-4 border-t border-slate-100 flex items-center gap-3">
+                <div class="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">
+                    {{ user.full_name.charAt(0) }}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="font-semibold text-sm truncate">{{ user.full_name }}</div>
+                    <div class="text-xs text-slate-400 capitalize">{{ user.role }}</div>
+                </div>
+                <button @click="logout" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-sign-out"></i></button>
+            </div>
+        </aside>
+
+        <main class="flex-1 flex flex-col h-full overflow-hidden w-full">
+            <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 shadow-sm shrink-0 z-10">
+                <div class="flex items-center gap-3">
+                    <button @click="mobileMenu = true" class="md:hidden text-slate-600 text-xl">
+                        <i class="fa-solid fa-bars"></i>
+                    </button>
+                    <h1 class="text-lg font-bold text-slate-800 capitalize">{{ view }}</h1>
+                </div>
+                <div v-if="user.role === 'admin'" class="flex items-center gap-2">
+                    <button @click="setView('builder')" class="bg-primary text-white w-8 h-8 md:w-auto md:px-4 md:py-2 rounded-full md:rounded-lg text-sm font-medium shadow-sm flex items-center justify-center">
+                        <span class="md:hidden"><i class="fa-solid fa-plus"></i></span>
+                        <span class="hidden md:inline">+ Quote</span>
                     </button>
                 </div>
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <table class="w-full text-sm text-left text-slate-600">
-                        <thead class="bg-slate-50 text-xs uppercase text-slate-500">
-                            <tr>
-                                <th class="px-6 py-3">Name</th>
-                                <th class="px-6 py-3">Type</th>
-                                <th class="px-6 py-3">Address</th>
-                                <th class="px-6 py-3">Contact</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="c in customers" :key="c.id" class="border-b border-slate-50">
-                                <td class="px-6 py-4 font-medium text-slate-900">{{ c.name }}</td>
-                                <td class="px-6 py-4"><span class="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded">{{ c.type }}</span></td>
-                                <td class="px-6 py-4">{{ c.address }}</td>
-                                <td class="px-6 py-4">{{ c.email }} <br> <span class="text-xs text-slate-400">{{ c.phone }}</span></td>
-                            </tr>
-                            <tr v-if="customers.length === 0">
-                                <td colspan="4" class="px-6 py-8 text-center text-slate-400">No customers yet.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            </header>
 
-            <div v-if="view === 'builder'" class="max-w-6xl mx-auto grid grid-cols-12 gap-8">
-                <div class="col-span-12 lg:col-span-4 space-y-6">
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <div class="flex-1 overflow-auto p-4 md:p-8 bg-surface">
+                
+                <div v-if="view === 'dashboard'" class="space-y-6 max-w-6xl mx-auto">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                            <p class="text-xs font-bold text-slate-400 uppercase">Revenue</p>
+                            <h3 class="text-xl md:text-2xl font-bold text-slate-800">${{ dashboard.revenue.toLocaleString() }}</h3>
+                        </div>
+                        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                            <p class="text-xs font-bold text-slate-400 uppercase">Pending</p>
+                            <h3 class="text-xl md:text-2xl font-bold text-slate-800">{{ dashboard.pending }}</h3>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div class="px-6 py-4 border-b border-slate-100 font-bold text-slate-700">Recent Activity</div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm text-left text-slate-600 whitespace-nowrap">
+                                <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                                    <tr>
+                                        <th class="px-6 py-3">Customer</th>
+                                        <th class="px-6 py-3">Total</th>
+                                        <th class="px-6 py-3">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="item in dashboard.recent" :key="item.id" class="border-b border-slate-50">
+                                        <td class="px-6 py-3 font-medium">{{ item.name }}</td>
+                                        <td class="px-6 py-3">${{ item.total.toFixed(0) }}</td>
+                                        <td class="px-6 py-3">
+                                            <span class="text-xs font-bold px-2 py-1 rounded-full bg-blue-50 text-blue-700">{{ item.status }}</span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="view === 'quotes'" class="max-w-6xl mx-auto">
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm text-left text-slate-600 whitespace-nowrap">
+                                <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                                    <tr>
+                                        <th class="px-6 py-3">Customer</th>
+                                        <th class="px-6 py-3">Total</th>
+                                        <th class="px-6 py-3">Status (Edit)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="q in quotesList" :key="q.id" class="border-b border-slate-50">
+                                        <td class="px-6 py-4">
+                                            <div class="font-medium text-slate-900">{{ q.customer_name }}</div>
+                                            <div class="text-xs text-slate-400">{{ q.created_at }}</div>
+                                        </td>
+                                        <td class="px-6 py-4 font-bold">${{ q.total.toFixed(2) }}</td>
+                                        <td class="px-6 py-4">
+                                            <select @change="updateStatus(q.id, $event.target.value)" 
+                                                    :value="q.status"
+                                                    class="bg-slate-50 border border-slate-200 text-xs rounded p-1">
+                                                <option value="Draft">Draft</option>
+                                                <option value="Approved">Approved</option>
+                                                <option value="Completed">Completed</option>
+                                            </select>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="view === 'accounts'" class="max-w-6xl mx-auto">
+                    <div class="flex justify-end mb-4">
+                        <button @click="openClientModal()" class="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 shadow-sm">
+                            + Add Account
+                        </button>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm text-left text-slate-600 whitespace-nowrap">
+                                <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                                    <tr>
+                                        <th class="px-6 py-3">Name</th>
+                                        <th class="px-6 py-3">Info</th>
+                                        <th class="px-6 py-3 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="c in customers" :key="c.id" class="border-b border-slate-50 hover:bg-slate-50">
+                                        <td class="px-6 py-4 font-bold text-slate-700">{{ c.name }}</td>
+                                        <td class="px-6 py-4 text-xs">
+                                            <div>{{ c.email }}</div>
+                                            <div class="text-slate-400">{{ c.phone }}</div>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <button @click="openClientModal(c)" class="text-primary text-xs font-bold hover:underline">Edit</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="view === 'builder'" class="max-w-6xl mx-auto grid grid-cols-1 gap-6">
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Customer</label>
-                        <select v-model="selectedCustomer" class="w-full bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5 mb-4">
-                            <option value="" disabled>Select a client...</option>
+                        <select v-model="selectedCustomer" class="w-full bg-slate-50 border p-2 rounded-lg mb-4 text-sm">
+                            <option value="" disabled>Select Client...</option>
                             <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.name }}</option>
                         </select>
-                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Notes</label>
-                        <textarea v-model="notes" rows="4" class="block p-2.5 w-full text-sm bg-slate-50 rounded-lg border border-slate-300"></textarea>
-                    </div>
-                    <button @click="saveQuote" class="w-full bg-success hover:bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-green-500/30 transition">
-                        Save Quote
-                    </button>
-                </div>
-
-                <div class="col-span-12 lg:col-span-8 space-y-6">
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 min-h-[500px] flex flex-col">
-                        <div class="flex gap-2 mb-6">
-                            <select v-model="selectedPart" class="flex-1 bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5">
-                                <option value="" disabled>Add Item...</option>
-                                <option v-for="p in catalog" :key="p.id" :value="p">{{ p.name }} — ${{ p.price }}</option>
+                        
+                        <div class="flex gap-2 mb-4">
+                            <select v-model="selectedPart" class="flex-1 bg-slate-50 border p-2 rounded-lg text-sm">
+                                <option value="" disabled>Part...</option>
+                                <option v-for="p in catalog" :key="p.id" :value="p">{{ p.name }} (${{p.price}})</option>
                             </select>
-                            <input v-model.number="qtyInput" type="number" min="1" class="w-20 bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 text-center">
-                            <button @click="addItem" class="bg-secondary text-white rounded-lg px-5 text-sm font-medium">Add</button>
+                            <button @click="addItem" class="bg-secondary text-white px-4 rounded-lg text-sm">Add</button>
                         </div>
-                        <table class="w-full text-sm text-left text-slate-600 mb-auto">
-                            <thead class="bg-slate-50 text-xs uppercase text-slate-400">
-                                <tr>
-                                    <th class="px-4 py-2">Desc</th>
-                                    <th class="px-4 py-2 text-center">Qty</th>
-                                    <th class="px-4 py-2 text-right">Total</th>
-                                    <th class="px-4 py-2"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr v-for="(item, index) in cart" :key="index" class="border-b border-slate-50">
-                                    <td class="px-4 py-3 font-medium">{{ item.name }}</td>
-                                    <td class="px-4 py-3 text-center">{{ item.qty }}</td>
-                                    <td class="px-4 py-3 text-right font-bold">${{ (item.price * item.qty).toFixed(2) }}</td>
-                                    <td class="px-4 py-3 text-right">
-                                        <button @click="removeItem(index)" class="text-red-400 hover:text-red-600"><i class="fa-solid fa-times"></i></button>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        <div class="border-t border-slate-100 pt-4 flex justify-between items-center">
-                            <span class="text-slate-400 text-sm">{{ cart.length }} items</span>
-                            <div class="text-right">
-                                <p class="text-2xl font-bold text-slate-800">Total: ${{ total.toFixed(2) }}</p>
+
+                        <div class="space-y-2 mb-4">
+                            <div v-for="(item, idx) in cart" :key="idx" class="flex justify-between text-sm border-b pb-2">
+                                <span>{{ item.name }} (x{{item.qty}})</span>
+                                <span class="font-bold">${{ (item.price * item.qty).toFixed(2) }}</span>
                             </div>
+                            <div v-if="cart.length===0" class="text-center text-slate-400 text-sm py-4">Cart empty</div>
                         </div>
+
+                        <button @click="saveQuote" class="w-full bg-green-500 hover:bg-green-600 text-white py-3 rounded-xl font-bold">
+                            Save Quote (${{ total.toFixed(0) }})
+                        </button>
                     </div>
                 </div>
+
             </div>
+        </main>
+    </div>
 
-        </div>
-
-        <div v-if="showModal" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50">
-            <div class="bg-white rounded-xl shadow-xl p-6 w-96">
-                <h3 class="text-lg font-bold mb-4">New Account</h3>
-                <input v-model="newClient.name" placeholder="Client Name" class="w-full border rounded-lg p-2.5 mb-3 text-sm">
-                <input v-model="newClient.email" placeholder="Email" class="w-full border rounded-lg p-2.5 mb-3 text-sm">
-                <input v-model="newClient.phone" placeholder="Phone" class="w-full border rounded-lg p-2.5 mb-3 text-sm">
-                <input v-model="newClient.address" placeholder="Address" class="w-full border rounded-lg p-2.5 mb-4 text-sm">
-                
-                <div class="flex justify-end gap-2">
-                    <button @click="showModal = false" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
-                    <button @click="createClient" class="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-blue-600">
-                        <span v-if="loading">Saving...</span>
-                        <span v-else>Save</span>
-                    </button>
-                </div>
+    <div v-if="showModal" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-bold mb-4">{{ isEditing ? 'Edit' : 'New' }} Account</h3>
+            <input v-model="formClient.name" placeholder="Name" class="w-full border rounded-lg p-2 mb-2 text-sm">
+            <input v-model="formClient.email" placeholder="Email" class="w-full border rounded-lg p-2 mb-2 text-sm">
+            <input v-model="formClient.phone" placeholder="Phone" class="w-full border rounded-lg p-2 mb-2 text-sm">
+            <input v-model="formClient.address" placeholder="Address" class="w-full border rounded-lg p-2 mb-4 text-sm">
+            <div class="flex justify-end gap-2">
+                <button @click="showModal = false" class="px-4 py-2 text-sm text-slate-600 bg-slate-100 rounded-lg">Cancel</button>
+                <button @click="saveClient" class="px-4 py-2 text-sm bg-primary text-white rounded-lg">Save</button>
             </div>
         </div>
+    </div>
 
-    </main>
 </div>
 
 <script>
@@ -287,131 +280,112 @@
     createApp({
         data() {
             return {
+                user: null, // { username, role, full_name }
+                loginForm: { username: '', password: '' },
                 view: 'dashboard',
-                loading: false,
+                mobileMenu: false,
+                dashboard: { revenue: 0, pending: 0, recent: [] },
+                quotesList: [],
                 customers: [],
                 catalog: [],
                 cart: [],
-                quotesList: [],
-                dashboard: { revenue: 0, pending: 0, active_jobs: 0, avg_ticket: 0, recent: [] },
+                // Builder Data
                 selectedCustomer: "",
                 selectedPart: "",
-                qtyInput: 1,
-                notes: "",
+                // Modal Data
                 showModal: false,
-                newClient: { name: "", type: "Commercial", email: "", phone: "", address: "" }
+                isEditing: false,
+                formClient: { id: null, name: "", email: "", phone: "", address: "" }
             }
         },
         computed: {
-            subtotal() { return this.cart.reduce((sum, item) => sum + (item.price * item.qty), 0) },
-            tax() { return this.subtotal * 0.0825 },
-            total() { return this.subtotal + this.tax }
-        },
-        mounted() {
-            this.initData()
-            this.refreshDashboard()
+            total() { return this.cart.reduce((s, i) => s + (i.price * i.qty), 0) }
         },
         methods: {
-            async setView(viewName) {
-                this.view = viewName
-                if (viewName === 'dashboard') this.refreshDashboard()
-                if (viewName === 'quotes') this.refreshQuotes()
-                if (viewName === 'accounts') this.initData()
+            async login() {
+                try {
+                    const res = await fetch('/api/login', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(this.loginForm)
+                    })
+                    if(!res.ok) throw new Error()
+                    const data = await res.json()
+                    this.user = data.user
+                    this.initData()
+                    this.refreshDashboard()
+                } catch(e) { alert("Login failed") }
+            },
+            logout() { this.user = null; this.loginForm = {username:'', password:''} },
+            navClass(v) {
+                return this.view === v ? 'bg-blue-50 text-primary' : 'text-slate-600 hover:bg-slate-50'
+            },
+            async setView(v) {
+                this.view = v
+                this.mobileMenu = false
+                if(v === 'dashboard') this.refreshDashboard()
+                if(v === 'quotes') this.refreshQuotes()
             },
             async initData() {
-                try {
-                    const res = await fetch('/api/init-data')
-                    const data = await res.json()
-                    this.customers = data.customers || []
-                    this.catalog = data.catalog || []
-                } catch(e) { console.error("Init Error", e) }
+                const res = await fetch('/api/init-data')
+                const data = await res.json()
+                this.customers = data.customers
+                this.catalog = data.catalog
             },
             async refreshDashboard() {
-                try {
-                    const res = await fetch('/api/dashboard')
-                    this.dashboard = await res.json()
-                } catch(e) { console.error("Dashboard Error", e) }
+                const res = await fetch('/api/dashboard')
+                this.dashboard = await res.json()
             },
             async refreshQuotes() {
-                try {
-                    const res = await fetch('/api/quotes')
-                    this.quotesList = await res.json()
-                } catch(e) { console.error("Quotes Error", e) }
+                const res = await fetch('/api/quotes')
+                this.quotesList = await res.json()
+            },
+            // --- EDITING & SAVING CUSTOMERS ---
+            openClientModal(client = null) {
+                if (client) {
+                    this.isEditing = true
+                    this.formClient = { ...client }
+                } else {
+                    this.isEditing = false
+                    this.formClient = { id: null, name: "", email: "", phone: "", address: "" }
+                }
+                this.showModal = true
+            },
+            async saveClient() {
+                const url = this.isEditing ? `/api/customers/${this.formClient.id}` : '/api/customers'
+                const method = this.isEditing ? 'PUT' : 'POST'
+                await fetch(url, {
+                    method: method, headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(this.formClient)
+                })
+                this.showModal = false
+                this.initData()
+            },
+            // --- QUOTES ---
+            async updateStatus(id, newStatus) {
+                await fetch(`/api/quotes/${id}/status`, {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ status: newStatus })
+                })
+                this.refreshQuotes()
             },
             addItem() {
-                if (!this.selectedPart) return
-                this.cart.push({
-                    id: this.selectedPart.id,
-                    name: this.selectedPart.name,
-                    price: this.selectedPart.price,
-                    qty: this.qtyInput || 1
-                })
-                this.selectedPart = ""
-                this.qtyInput = 1
-            },
-            removeItem(index) {
-                this.cart.splice(index, 1)
-            },
-            async createClient() {
-                if (!this.newClient.name) {
-                    alert("Please enter a client name.")
-                    return
-                }
-                this.loading = true
-                try {
-                    const res = await fetch('/api/customers', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(this.newClient)
-                    })
-                    
-                    if (!res.ok) throw new Error("Server error")
-                    
-                    await this.initData() 
-                    this.showModal = false
-                    this.newClient = { name: "", type: "Commercial", email: "", phone: "", address: "" }
-                } catch (e) {
-                    alert("Failed to save customer. Check console for errors.")
-                    console.error(e)
-                } finally {
-                    this.loading = false
-                }
+                if(!this.selectedPart) return
+                this.cart.push({ ...this.selectedPart, qty: 1 })
             },
             async saveQuote() {
-                if (!this.selectedCustomer) { alert("Select a client first."); return; }
-                if (this.cart.length === 0) { alert("Add at least one line item."); return; }
-                
-                this.loading = true
-                try {
-                    const payload = {
-                        customer_id: this.selectedCustomer,
-                        items: this.cart,
-                        total: this.total,
-                        notes: this.notes
-                    }
-                    const res = await fetch('/api/quotes', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+                if(!this.selectedCustomer || !this.cart.length) return alert("Missing Info")
+                await fetch('/api/quotes', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        customer_id: this.selectedCustomer, items: this.cart, total: this.total
                     })
-                    
-                    if (!res.ok) throw new Error("Failed to save quote")
-
-                    alert("Quote Saved!")
-                    this.cart = []
-                    this.selectedCustomer = ""
-                    this.notes = ""
-                    this.setView('quotes')
-                } catch (e) {
-                    alert("Error saving quote.")
-                    console.error(e)
-                } finally {
-                    this.loading = false
-                }
+                })
+                this.cart = []
+                this.selectedCustomer = ""
+                alert("Quote Saved")
             }
         }
     }).mount('#app')
 </script>
-
 </body>
 </html>
