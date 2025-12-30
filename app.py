@@ -1,545 +1,683 @@
-import dash
-from dash import dcc, html, Input, Output, State, dash_table, ctx, callback, ALL
-import dash_bootstrap_components as dbc
-import plotly.express as px
-import plotly.graph_objects as go
-from fpdf import FPDF
-from datetime import datetime, date, timedelta
-import pandas as pd
-import psycopg2 
-from psycopg2.extras import RealDictCursor
+from __future__ import annotations
+
 import json
-import uuid
-import random
-import os
-from flask import Flask
-from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user
-from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime, date, time, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, String, Text, create_engine, select, func
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # =========================================================
-#  1. CONFIGURATION & DATABASE
-# =========================================================
-DATABASE_URL = os.environ.get("DATABASE_URL")
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret")
-
-server = Flask(__name__)
-server.secret_key = SECRET_KEY
-
-def get_db_connection():
-    if not DATABASE_URL: raise ValueError("DATABASE_URL not set")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-
-def execute_query(query, args=(), fetch=False):
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(query, args)
-        if fetch:
-            res = cur.fetchall()
-            conn.close()
-            return res
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        conn.close()
-        raise e
-
-def get_df(query, args=()):
-    conn = get_db_connection()
-    df = pd.read_sql_query(query, conn, params=args)
-    conn.close()
-    return df
-
-# --- Auth ---
-login_manager = LoginManager()
-login_manager.init_app(server)
-login_manager.login_view = "/login"
-
-class User(UserMixin):
-    def __init__(self, id, username, role):
-        self.id, self.username, self.role = id, username, role
-
-@login_manager.user_loader
-def load_user(user_id):
-    try:
-        res = execute_query("SELECT id, username, role FROM users WHERE id = %s", (user_id,), fetch=True)
-        return User(res[0]['id'], res[0]['username'], res[0]['role']) if res else None
-    except: return None
-
-# --- Init DB ---
-if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or os.environ.get("RENDER"):
-    try:
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, role TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT, address TEXT, email TEXT, phone TEXT, type TEXT, notes TEXT, created_at TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS catalog (id TEXT PRIMARY KEY, name TEXT, type TEXT, cost REAL, price REAL)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS quotes (id TEXT PRIMARY KEY, customer_id TEXT, status TEXT, created_at TEXT, items_json TEXT, subtotal REAL, tax REAL, discount REAL, fee REAL, total REAL, notes TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, quote_id TEXT, customer_id TEXT, status TEXT, scheduled_date TEXT, tech TEXT, items_json TEXT, notes TEXT, total REAL)''')
-        conn.commit()
-        
-        # Seeding
-        c.execute("SELECT count(*) as cnt FROM users")
-        if c.fetchone()['cnt'] == 0:
-            print("--- SEEDING DATA ---")
-            c.execute("INSERT INTO users VALUES (%s, %s, %s, %s)", ("U-1", "admin", generate_password_hash("admin123"), "Admin"))
-            c.execute("INSERT INTO customers VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", ("C-1", "Starbucks #402", "1912 Pike Place, Seattle, WA", "mgr@sbux.com", "206-555-0101", "Commercial", "Gate: 9999", datetime.now().isoformat()))
-            c.execute("INSERT INTO customers VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", ("C-2", "Hilton Union Square", "333 O'Farrell St, San Francisco, CA", "ap@hilton.com", "415-555-0199", "Commercial", "Check in at security", datetime.now().isoformat()))
-            c.execute("INSERT INTO catalog VALUES (%s,%s,%s,%s,%s)", ("P-1", "16 SEER Condenser", "Part", 1200.0, 2800.0))
-            c.execute("INSERT INTO catalog VALUES (%s,%s,%s,%s,%s)", ("L-1", "Master Labor", "Labor", 60.0, 185.0))
-            conn.commit()
-        conn.close()
-    except Exception as e: print(f"DB Init Warning: {e}")
-
-# =========================================================
-#  2. DESIGN SYSTEM (CSS)
-# =========================================================
-# This CSS transforms Bootstrap into the "TradeOps" SaaS look
-custom_css = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-:root {
-    --primary: #1E40AF; /* Deep Blue */
-    --primary-hover: #1E3A8A;
-    --bg-main: #F3F4F6;
-    --card-bg: #FFFFFF;
-    --border-color: #E5E7EB;
-    --text-primary: #111827;
-    --text-secondary: #6B7280;
-}
-
-body { background-color: var(--bg-main); font-family: 'Inter', sans-serif; color: var(--text-primary); }
-
-/* Layout */
-.sidebar { 
-    position: fixed; top: 0; left: 0; bottom: 0; width: 250px; 
-    background: #FFFFFF; border-right: 1px solid var(--border-color); 
-    padding: 2rem 1rem; z-index: 50; display: flex; flex-direction: column;
-}
-.content { margin-left: 250px; padding: 2.5rem; }
-
-/* Navigation */
-.nav-link { 
-    color: var(--text-secondary); font-weight: 500; padding: 0.75rem 1rem; 
-    border-radius: 6px; transition: all 0.2s ease-in-out; margin-bottom: 4px; display: flex; align-items: center;
-}
-.nav-link:hover { background-color: #EFF6FF; color: var(--primary); }
-.nav-link.active { background-color: #DBEAFE; color: var(--primary); font-weight: 600; }
-.nav-link i { margin-right: 12px; font-size: 1.1rem; }
-
-/* Cards */
-.saas-card { 
-    background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border-color);
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); padding: 1.5rem; margin-bottom: 1.5rem;
-}
-.card-header { font-size: 0.875rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 1rem; }
-
-/* Typography */
-h1, h2, h3 { font-weight: 700; color: #1F2937; letter-spacing: -0.025em; }
-.text-label { font-size: 0.75rem; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; display: block; }
-
-/* Inputs & Forms */
-.form-control, .form-select { 
-    border: 1px solid #D1D5DB; border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.95rem; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-}
-.form-control:focus, .form-select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
-
-/* Buttons */
-.btn-primary { 
-    background-color: var(--primary); border: none; padding: 0.6rem 1.2rem; 
-    font-weight: 500; border-radius: 6px; 
-}
-.btn-primary:hover { background-color: var(--primary-hover); }
-.btn-back { font-weight: 600; color: var(--text-secondary); text-decoration: none; display: flex; align-items: center; margin-bottom: 1.5rem; transition: color 0.2s; }
-.btn-back:hover { color: var(--primary); }
-
-/* Tables */
-.dash-spreadsheet-container .dash-spreadsheet-inner th { 
-    background-color: #F9FAFB !important; color: #4B5563 !important; 
-    font-weight: 600 !important; text-transform: uppercase; font-size: 0.75rem; border-bottom: 1px solid #E5E7EB !important; padding: 12px !important;
-}
-.dash-spreadsheet-container .dash-spreadsheet-inner td { 
-    border-bottom: 1px solid #F3F4F6 !important; padding: 14px 12px !important; color: #374151; font-size: 0.9rem;
-}
-.dash-table-container .dash-spreadsheet-inner tr:hover td { background-color: #F9FAFB !important; }
-
-/* Status Badges */
-.status-badge { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
-.status-Approved { background: #DCFCE7; color: #166534; }
-.status-Draft { background: #FEF3C7; color: #92400E; }
-.status-Sent { background: #DBEAFE; color: #1E40AF; }
-.status-Completed { background: #F3F4F6; color: #374151; }
-
-/* Mobile */
-@media (max-width: 768px) {
-    .sidebar { width: 100%; height: auto; position: relative; display: flex; flex-direction: row; overflow-x: auto; padding: 1rem; border-bottom: 1px solid #E5E7EB; border-right: none; white-space: nowrap; }
-    .content { margin-left: 0; padding: 1rem; }
-}
-"""
-
-app = dash.Dash(__name__, server=server, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.BOOTSTRAP])
-app.title = "TradeOps"
-app.index_string = f'''<!DOCTYPE html><html><head>{{%metas%}}<title>{{%title%}}</title>{{%favicon%}}{{%css%}}<style>{custom_css}</style></head><body>{{%app_entry%}}<footer>{{%config%}}{{%scripts%}}{{%renderer%}}</footer></body></html>'''
-
-# =========================================================
-#  3. HELPER FUNCTIONS
-# =========================================================
-def create_pdf(data):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 20)
-    pdf.set_text_color(30, 64, 175) 
-    pdf.cell(0, 10, "TradeOps", ln=True)
-    pdf.set_font("Arial", "", 10)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 8, f"Quote #: {data['id']} | Date: {date.today()}", ln=True)
-    pdf.ln(10)
-    pdf.set_fill_color(243, 244, 246)
-    pdf.set_font("Arial", "B", 9)
-    pdf.set_text_color(0,0,0)
-    pdf.cell(110, 10, "DESCRIPTION", 0, 0, 'L', 1)
-    pdf.cell(30, 10, "QTY", 0, 0, 'C', 1)
-    pdf.cell(50, 10, "TOTAL", 0, 1, 'R', 1)
-    pdf.set_font("Arial", "", 10)
-    for item in data['items']:
-        pdf.cell(110, 12, item['name'], 0, 0, 'L')
-        pdf.cell(30, 12, str(item['qty']), 0, 0, 'C')
-        pdf.cell(50, 12, f"${item['price']*item['qty']:.2f}", 0, 1, 'R')
-        pdf.ln(0)
-        pdf.cell(0,0, "", "B") 
-        pdf.ln(12)
-    pdf.ln(5)
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(140, 10, "Total Due:", 0, 0, 'R')
-    pdf.cell(50, 10, f"${data['total']:,.2f}", 0, 1, 'R')
-    return pdf.output(dest='S').encode('latin-1')
-
-def generate_map(lat=47.6062, lon=-122.3321):
-    fig = go.Figure(go.Scattermapbox(lat=[lat], lon=[lon], mode='markers', marker=go.scattermapbox.Marker(size=14, color='#1E40AF'), text=["Job Site"]))
-    fig.update_layout(mapbox_style="open-street-map", mapbox_center_lat=lat, mapbox_center_lon=lon, mapbox_zoom=13, margin={"r":0,"t":0,"l":0,"b":0}, height=300)
-    return fig
-
-# =========================================================
-#  4. COMPONENT VIEWS
+# TradeOps Full Tool (POC)
+# - FastAPI + SQLite + SQLAlchemy
+# - Keeps your existing SPA routes and /api endpoints,
+#   but upgrades the backend to support:
+#   * Accounts/Customers
+#   * Quotes + Quote Management (status, edit, detail)
+#   * Service Calls / Appointments (schedule, assign tech, complete)
 # =========================================================
 
-def LoginView():
-    return html.Div([
-        dbc.Card([
-            dbc.CardBody([
-                html.H3([html.I(className="bi bi-lightning-charge-fill me-2"), "TradeOps"], className="text-center fw-bold mb-4", style={"color": "#1E40AF"}),
-                html.P("Sign in to your account", className="text-center text-muted mb-4"),
-                dbc.Input(id="login-user", placeholder="Username", className="mb-3 p-3"),
-                dbc.Input(id="login-pass", placeholder="Password", type="password", className="mb-4 p-3"),
-                dbc.Button("Sign In", id="btn-login", color="primary", className="w-100 p-2"),
-                html.Div(id="login-msg", className="text-danger text-center mt-3 small")
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "tradeops.db"
+DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    future=True,
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+Base = declarative_base()
+
+
+def utcnow() -> datetime:
+    return datetime.utcnow()
+
+
+def iso_date(d: Optional[datetime]) -> str:
+    if not d:
+        return ""
+    return d.strftime("%Y-%m-%d")
+
+
+def iso_time(d: Optional[datetime]) -> str:
+    if not d:
+        return ""
+    return d.strftime("%H:%M")
+
+
+# =========================================================
+# DB MODELS
+# =========================================================
+
+class User(Base):
+    __tablename__ = "users"
+
+    username = Column(String, primary_key=True)
+    password = Column(String, nullable=False)  # POC only
+    role = Column(String, nullable=False)      # admin / tech
+    full_name = Column(String, nullable=False)
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    email = Column(String, default="")
+    phone = Column(String, default="")
+    address = Column(String, default="")
+    city = Column(String, default="")
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    quotes = relationship("Quote", back_populates="customer", cascade="all, delete-orphan")
+    service_calls = relationship("ServiceCall", back_populates="customer", cascade="all, delete-orphan")
+
+
+class CatalogItem(Base):
+    __tablename__ = "catalog"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    category = Column(String, default="")
+    base_cost = Column(Float, default=0.0)
+    price = Column(Float, default=0.0)
+
+
+class Quote(Base):
+    __tablename__ = "quotes"
+
+    id = Column(String, primary_key=True)
+    customer_id = Column(String, ForeignKey("customers.id"), nullable=False)
+    status = Column(String, default="Draft")  # Draft, Sent, Approved, Declined
+    total = Column(Float, default=0.0)
+    notes = Column(Text, default="")
+    items_json = Column(Text, default="[]")
+
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, nullable=False)
+
+    customer = relationship("Customer", back_populates="quotes")
+    service_call = relationship("ServiceCall", back_populates="quote", uselist=False)
+
+
+class ServiceCall(Base):
+    """
+    Represents an appointment / service call / job.
+    Reuses your existing UI concepts:
+    - Dispatch board assigns tech + schedule
+    - Tech "My Schedule" shows assigned jobs
+    - Job Details allows work order items + completion notes + completion
+    """
+    __tablename__ = "service_calls"
+
+    id = Column(String, primary_key=True)
+    customer_id = Column(String, ForeignKey("customers.id"), nullable=False)
+    quote_id = Column(String, ForeignKey("quotes.id"), nullable=True)
+
+    status = Column(String, default="New")  # New, Approved, Scheduled, In Progress, Complete
+    title = Column(String, default="Service Call")
+    address = Column(String, default="")
+
+    tech_username = Column(String, ForeignKey("users.username"), nullable=True)
+    scheduled_start = Column(DateTime, nullable=True)
+    scheduled_end = Column(DateTime, nullable=True)
+
+    total = Column(Float, default=0.0)
+    items_json = Column(Text, default="[]")
+    notes = Column(Text, default="")
+
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    customer = relationship("Customer", back_populates="service_calls")
+    quote = relationship("Quote", back_populates="service_call")
+
+
+# =========================================================
+# Pydantic Schemas
+# =========================================================
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class CustomerIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    email: str = ""
+    phone: str = ""
+    address: str = ""
+    city: str = ""
+
+
+class QuoteItemIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    category: Optional[str] = ""
+    price: float
+    qty: int = 1
+
+
+class QuoteIn(BaseModel):
+    customer_id: str
+    items: List[QuoteItemIn]
+    total: float
+    notes: str = ""
+    status: Optional[str] = None  # if omitted -> Draft
+
+
+class QuoteUpdateIn(BaseModel):
+    items: List[QuoteItemIn]
+    total: float
+    notes: str = ""
+    status: Optional[str] = None
+
+
+class QuoteStatusIn(BaseModel):
+    status: str
+
+
+class ServiceCallIn(BaseModel):
+    customer_id: str
+    title: str = "Service Call"
+    address: str = ""
+    quote_id: Optional[str] = None
+    notes: str = ""
+    status: str = "New"
+
+
+class AssignIn(BaseModel):
+    # NOTE: the existing SPA posts "quote_id" for the job id (kept for compatibility)
+    quote_id: str = Field(..., description="ServiceCall.id (kept field name for UI compatibility)")
+    tech_username: str
+    scheduled_date: str  # YYYY-MM-DD
+    start_time: Optional[str] = "09:00"  # HH:MM
+    duration_minutes: Optional[int] = 120
+
+
+class CompleteJobIn(BaseModel):
+    job_id: str
+    final_items: List[QuoteItemIn]
+    total: float
+    notes: str = ""
+
+
+# =========================================================
+# App Setup
+# =========================================================
+
+app = FastAPI(title="TradeOps Full Tool")
+
+# Serve SPA
+static_path = BASE_DIR / "static"
+static_path.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_path), name="static")
+
+
+@app.get("/")
+def root():
+    index = static_path / "index.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="index.html not found in ./static")
+    return FileResponse(index)
+
+
+# =========================================================
+# DB Init / Seeding
+# =========================================================
+
+def init_db():
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        # Seed users
+        if db.execute(select(func.count(User.username))).scalar_one() == 0:
+            db.add_all([
+                User(username="admin", password="admin", role="admin", full_name="Admin User"),
+                User(username="tech", password="tech", role="tech", full_name="Technician User"),
+                User(username="tech2", password="tech2", role="tech", full_name="Technician Two"),
             ])
-        ], style={"width": "400px"}, className="border-0 shadow-lg")
-    ], style={"height": "100vh", "display": "flex", "alignItems": "center", "justifyContent": "center", "background": "#F3F4F6"})
 
-def Sidebar():
-    return html.Div([
-        html.H4([html.I(className="bi bi-lightning-charge-fill me-2"), "TradeOps"], className="fw-bold mb-5 ps-2", style={"color": "#1E40AF"}),
-        dbc.Nav([
-            dbc.NavLink([html.I(className="bi bi-grid-fill"), "Dashboard"], href="/", active="exact"),
-            dbc.NavLink([html.I(className="bi bi-calendar2-week-fill"), "Dispatch Board"], href="/dispatch", active="exact"),
-            dbc.NavLink([html.I(className="bi bi-file-earmark-text-fill"), "Quotes"], href="/quotes", active="exact"),
-            dbc.NavLink([html.I(className="bi bi-tools"), "Jobs List"], href="/jobs", active="exact"),
-            dbc.NavLink([html.I(className="bi bi-people-fill"), "Accounts"], href="/accounts", active="exact"),
-        ], vertical=True, pills=True),
-        html.Div([
-            html.Hr(),
-            html.Div([
-                html.Div([html.H6(current_user.username.title(), className="mb-0"), html.Small(current_user.role, className="text-muted")], className="ms-2")
-            ], className="d-flex align-items-center mb-3"),
-            dbc.NavLink([html.I(className="bi bi-box-arrow-right"), "Logout"], href="/logout", className="text-danger ps-2")
-        ], className="mt-auto")
-    ], className="sidebar")
+        # Seed customers
+        if db.execute(select(func.count(Customer.id))).scalar_one() == 0:
+            db.add_all([
+                Customer(id="C-1", name="Burger King #402", address="123 Whopper Ln", city="Austin", email="bk402@franchise.com", phone="(512) 555-0101"),
+                Customer(id="C-2", name="Marriott Downtown", address="400 Congress Ave", city="Austin", email="manager@marriott.com", phone="(512) 555-0102"),
+                Customer(id="C-3", name="Residential - John Doe", address="88 Maple St", city="Austin", email="john@example.com", phone="(512) 555-0103"),
+            ])
 
-def MetricCard(title, value, subtext, icon, color):
-    return dbc.Col(html.Div([
-        html.Div([html.Span(title, className="text-label mb-2"), html.I(className=f"bi {icon} fs-5 text-{color}")], className="d-flex justify-content-between align-items-center"),
-        html.H3(value, className="fw-bold mb-1"),
-        html.Small(subtext, className=f"text-{color} fw-bold")
-    ], className="saas-card h-100"), md=3)
-
-def DashboardView():
-    df_q = get_df("SELECT * FROM quotes")
-    df_j = get_df("SELECT * FROM jobs")
-    
-    # Calculate Metrics
-    rev = df_q[df_q['status']=='Approved']['total'].sum()
-    open_q = len(df_q[df_q['status']=='Draft'])
-    
-    # Generate Charts
-    # 1. Revenue History
-    dates = pd.date_range(end=datetime.today(), periods=6, freq='M').strftime("%b")
-    rev_data = [random.randint(5000, 15000) for _ in range(6)]
-    fig_rev = px.area(x=dates, y=rev_data, title="Revenue Trend (6 Mo)", template="plotly_white")
-    fig_rev.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=300, yaxis_title=None, xaxis_title=None)
-    fig_rev.update_traces(line_color="#1E40AF", fillcolor="rgba(30, 64, 175, 0.1)")
-
-    # 2. Job Status Distribution (CORRECTED)
-    status_counts = df_j['status'].value_counts().reset_index()
-    status_counts.columns = ['status', 'count']
-    if status_counts.empty:
-         fig_pie = go.Figure().add_annotation(text="No Jobs Data", showarrow=False)
-    else:
-        # Changed px.donut to px.pie
-        fig_pie = px.pie(status_counts, values='count', names='status', title="Job Status", hole=0.6, template="plotly_white", color_discrete_sequence=px.colors.sequential.Blues_r)
-        fig_pie.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=300, showlegend=False)
-        fig_pie.update_traces(textinfo='label+value')
-
-    return html.Div([
-        html.H2("Executive Dashboard", className="fw-bold mb-4"),
-        
-        # Metrics Row
-        dbc.Row([
-            MetricCard("Total Revenue", f"${rev:,.0f}", "+12% vs last month", "bi-currency-dollar", "success"),
-            MetricCard("Open Quotes", str(open_q), "Requires attention", "bi-file-text", "warning"),
-            MetricCard("Active Jobs", str(len(df_j[df_j['status']!='Completed'])), "In progress", "bi-tools", "primary"),
-            MetricCard("Tech Utilization", "85%", "High demand", "bi-lightning-charge", "info"),
-        ], className="mb-4"),
-
-        # Charts Row
-        dbc.Row([
-            dbc.Col(html.Div([dcc.Graph(figure=fig_rev, config={'displayModeBar': False})], className="saas-card"), md=8),
-            dbc.Col(html.Div([dcc.Graph(figure=fig_pie, config={'displayModeBar': False})], className="saas-card"), md=4)
-        ]),
-
-        # Quick Actions
-        dbc.Row([
-            dbc.Col(html.Div([
-                html.H5("Quick Actions", className="fw-bold mb-3"),
-                dbc.Row([
-                    dbc.Col(dbc.Button([html.I(className="bi bi-plus-lg me-2"), "Create New Quote"], href="/builder/Q-NEW", color="primary", className="w-100 py-3"), md=6),
-                    dbc.Col(dbc.Button([html.I(className="bi bi-calendar-check me-2"), "View Dispatch Board"], href="/dispatch", color="light", className="w-100 py-3 border"), md=6),
-                ])
-            ], className="saas-card"), width=12)
-        ])
-    ])
-
-def QuotesListView():
-    df = get_df("SELECT q.id, c.name, q.status, q.total, q.created_at FROM quotes q JOIN customers c ON q.customer_id = c.id ORDER BY q.created_at DESC")
-    return html.Div([
-        dbc.Row([dbc.Col(html.H2("Quotes", className="fw-bold"), width=9), dbc.Col(dbc.Button("+ New Quote", href="/builder/Q-NEW", color="primary", className="float-end"), width=3)]),
-        html.Div(dash_table.DataTable(
-            id='quotes-table', data=df.to_dict('records'),
-            columns=[
-                {"name": "ID", "id": "id"}, {"name": "Customer", "id": "name"}, 
-                {"name": "Date", "id": "created_at"}, {"name": "Total", "id": "total", "type": "numeric", "format": {"specifier": "$,.2f"}},
-                {"name": "Status", "id": "status"}
-            ],
-            style_as_list_view=True, row_selectable='single',
-            style_cell={'fontFamily': 'Inter', 'textAlign': 'left', 'padding': '16px'},
-            style_header={'backgroundColor': '#F9FAFB', 'fontWeight': '600', 'color': '#6B7280', 'borderBottom': '1px solid #E5E7EB'},
-            style_data_conditional=[
-                {'if': {'filter_query': '{status} = "Approved"', 'column_id': 'status'}, 'color': '#059669', 'fontWeight': '600'},
-                {'if': {'filter_query': '{status} = "Draft"', 'column_id': 'status'}, 'color': '#D97706', 'fontWeight': '600'},
+        # Seed catalog
+        if db.execute(select(func.count(CatalogItem.id))).scalar_one() == 0:
+            seed = [
+                ("I-1", "HVAC Tune-up", "Service", 20, 89),
+                ("I-2", "16 SEER AC Unit", "Install", 1800, 2800),
+                ("I-3", "Water Heater Install", "Install", 600, 1200),
+                ("I-4", "Panel Upgrade 200A", "Install", 800, 1600),
+                ("I-5", "Drain Cleaning", "Service", 10, 149),
+                ("I-6", "Smart Thermostat", "Service", 80, 249),
+                ("I-7", "EV Charger Install", "Install", 300, 950),
             ]
-        ), className="saas-card mt-4")
-    ])
+            db.add_all([CatalogItem(id=i, name=n, category=c, base_cost=float(bc), price=float(p)) for i, n, c, bc, p in seed])
 
-def QuoteBuilderView(qid):
-    state = {"id": "Q-NEW", "status": "Draft", "customer_id": None, "items": [], "total": 0}
-    if qid != "Q-NEW":
-        rows = execute_query("SELECT * FROM quotes WHERE id=%s", (qid,), fetch=True)
-        if rows:
-            r = rows[0]
-            state = {"id": r['id'], "status": r['status'], "customer_id": r['customer_id'], "items": json.loads(r['items_json']), "total": r['total']}
-    
-    customers = get_df("SELECT id, name FROM customers")
-    catalog = get_df("SELECT * FROM catalog")
-    
-    return html.Div([
-        dcc.Store(id="quote-state", data=state), dcc.Download(id="dl-pdf"),
-        html.A([html.I(className="bi bi-arrow-left me-2"), "Back to Quotes"], href="/quotes", className="btn-back"),
-        
-        html.Div([
-            dbc.Row([
-                dbc.Col(html.H2(f"Quote {state['id']}", className="fw-bold"), width=8),
-                dbc.Col(html.Span(state['status'], className=f"status-badge status-{state['status']} float-end"), width=4)
-            ], className="mb-4 pb-3 border-bottom"),
-            
-            dbc.Row([
-                dbc.Col([
-                    html.Label("Customer Information", className="text-label"),
-                    dcc.Dropdown(id="c-sel", options=[{'label':c['name'], 'value':c['id']} for _,c in customers.iterrows()], value=state['customer_id'], placeholder="Select Customer...", className="mb-4"),
-                    html.Label("Internal Notes", className="text-label"),
-                    dbc.Textarea(id="q-notes", placeholder="Add notes here...", style={"height": "120px", "background": "#F9FAFB", "border": "1px solid #E5E7EB"}),
-                    html.Div(id="q-toast", className="mt-3")
-                ], md=4, className="pe-5"),
-                
-                dbc.Col([
-                    html.Label("Line Items", className="text-label"),
-                    dbc.InputGroup([
-                        dbc.Select(id="cat-sel", options=[{'label':f"{x['name']} (${x['price']})", 'value':x['id']} for _,x in catalog.iterrows()], placeholder="Select item from catalog..."),
-                        dbc.Button("Add Item", id="btn-add", color="dark")
-                    ], className="mb-4"),
-                    html.Div(id="cart", className="mb-4"),
-                    html.Hr(),
-                    dbc.Row([dbc.Col("Subtotal:", width=8, className="text-end text-muted"), dbc.Col(id="subtot-display", width=4, className="text-end fw-bold")]),
-                    dbc.Row([dbc.Col("Tax (8.25%):", width=8, className="text-end text-muted"), dbc.Col(id="tax-display", width=4, className="text-end fw-bold")]),
-                    dbc.Row([dbc.Col("Total Due:", width=8, className="text-end fs-5 fw-bold mt-2"), dbc.Col(id="tot", width=4, className="text-end fs-5 fw-bold mt-2 text-primary")]),
-                    html.Div(id="q-acts", className="d-flex justify-content-end mt-4 gap-2")
-                ], md=8, className="ps-4 border-start")
-            ])
-        ], className="saas-card")
-    ])
+        db.commit()
 
-def DispatchBoardView():
-    unassigned = get_df("SELECT j.id, c.name, j.total FROM jobs j JOIN customers c ON j.customer_id = c.id WHERE j.status = 'Unscheduled'")
-    scheduled = get_df("SELECT j.*, c.name FROM jobs j JOIN customers c ON j.customer_id = c.id WHERE j.status IN ('Scheduled', 'Completed')")
-    
-    # Tech Columns
-    techs = ["Elliott", "Sarah", "Mike", "John"]
-    cols = []
-    for tech in techs:
-        jobs = scheduled[scheduled['tech'] == tech]
-        cards = [dbc.Card([dbc.CardBody([html.H6(j['name'], className="fw-bold mb-1"), html.Small(f"#{j['id']} • {j['scheduled_date']}", className="text-muted")])], className="mb-2 border-0 shadow-sm") for _, j in jobs.iterrows()] if not jobs.empty else [html.Div("No jobs", className="text-muted small")]
-        cols.append(dbc.Col([html.Div([html.Div(tech[0], className="rounded-circle bg-light border d-flex align-items-center justify-content-center me-2", style={"width":"32px","height":"32px"}), html.H6(tech, className="mb-0")], className="d-flex align-items-center mb-3 pb-2 border-bottom"), html.Div(cards)], md=3))
 
-    return html.Div([
-        html.H2("Dispatch Board", className="fw-bold mb-4"),
-        dbc.Row([
-            dbc.Col(html.Div([
-                html.H5("Unassigned Bucket", className="fw-bold mb-3 text-danger"),
-                dash_table.DataTable(id='u-table', data=unassigned.to_dict('records'), columns=[{"name":"Job","id":"id"},{"name":"Client","id":"name"}], row_selectable='single', style_as_list_view=True, style_header={'display':'none'}),
-            ], className="saas-card h-100"), md=3),
-            dbc.Col(html.Div([dbc.Row(cols)], className="saas-card h-100"), md=9)
-        ]),
-        dbc.Modal([dbc.ModalHeader("Assign Job"), dbc.ModalBody([dcc.Input(id="d-jid", type="hidden"), dbc.Label("Tech"), dbc.Select(id="d-tech", options=[{"label":t,"value":t} for t in techs]), dbc.Label("Date", className="mt-2"), dcc.DatePickerSingle(id="d-date", date=date.today(), display_format="YYYY-MM-DD", className="d-block w-100")]), dbc.ModalFooter(dbc.Button("Assign", id="btn-d-ok", color="primary"))], id="d-modal", is_open=False)
-    ])
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
-def JobView(jid):
-    res = execute_query("SELECT j.*, c.name, c.address, c.phone FROM jobs j JOIN customers c ON j.customer_id = c.id WHERE j.id = %s", (jid,), fetch=True)
-    if not res: return html.Div("Job not found")
-    job = res[0]
-    items = json.loads(job['items_json'])
-    
-    return html.Div([
-        dcc.Store(id="j-state", data={"id":jid, "items":items}),
-        html.A([html.I(className="bi bi-arrow-left me-2"), "Back to Dispatch"], href="/dispatch", className="btn-back"),
-        
-        dbc.Row([
-            dbc.Col([html.H2(f"Job #{jid}", className="fw-bold d-inline me-3"), html.Span(job['status'], className=f"status-badge status-{job['status']}")], width=8),
-            dbc.Col(dbc.Button([html.I(className="bi bi-check2-circle me-2"), "Complete Job"], id="btn-j-comp", color="success", className="float-end"), width=4)
-        ], className="mb-4"),
-
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.Label("Customer Details", className="text-label mb-3"),
-                    html.H5(job['name'], className="fw-bold"),
-                    html.P([html.I(className="bi bi-geo-alt me-2 text-muted"), job['address']], className="mb-1"),
-                    html.P([html.I(className="bi bi-telephone me-2 text-muted"), job['phone']], className="mb-0"),
-                ], className="saas-card h-100"),
-            ], md=4),
-            dbc.Col([
-                html.Div([dcc.Graph(figure=generate_map(), config={'displayModeBar': False})], className="saas-card h-100 p-0 overflow-hidden"),
-            ], md=8)
-        ], className="mb-4"),
-
-        html.Div([
-            dbc.Row([
-                dbc.Col(html.H5("Work Order Items", className="fw-bold"), width=8),
-                dbc.Col(dbc.Button("+ Add Part", id="btn-j-add-modal", size="sm", color="link", className="text-decoration-none"), width=4, className="text-end")
-            ], className="mb-3"),
-            html.Div(id="j-cart"),
-            html.Hr(),
-            html.H4(id="j-total", className="text-end fw-bold text-primary")
-        ], className="saas-card"),
-        
-        dbc.Modal([dbc.ModalHeader("Add Item"), dbc.ModalBody([dbc.Input(id="j-add-n", placeholder="Item Name"), dbc.Input(id="j-add-p", placeholder="Price", type="number", className="mt-2")]), dbc.ModalFooter(dbc.Button("Add", id="btn-j-add-confirm", color="primary"))], id="j-modal", is_open=False)
-    ])
 
 # =========================================================
-#  5. ROUTING & LOGIC
+# Helpers
 # =========================================================
-app.layout = html.Div([dcc.Location(id="url"), html.Div(id="page-content")])
 
-@app.callback(Output("page-content", "children"), Input("url", "pathname"))
-def router(path):
-    if path == "/login": return LoginView()
-    if path == "/logout": logout_user(); return LoginView()
-    if not current_user.is_authenticated: return LoginView()
-    if path == "/" or path == "/dashboard": return DashboardView()
-    if path == "/quotes": return QuotesListView()
-    if path == "/dispatch": return DispatchBoardView()
-    if path == "/jobs": return QuotesListView() # Placeholder for full list
-    if path == "/accounts": return QuotesListView() # Placeholder
-    if path.startswith("/builder/"): return QuoteBuilderView(path.split("/")[-1])
-    if path.startswith("/job/"): return JobView(path.split("/")[-1])
-    return DashboardView()
+def customer_to_dict(c: Customer) -> Dict[str, Any]:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "email": c.email,
+        "phone": c.phone,
+        "address": c.address,
+        "city": c.city,
+    }
 
-@app.callback([Output("url", "pathname"), Output("login-msg", "children")], Input("btn-login", "n_clicks"), [State("login-user", "value"), State("login-pass", "value")], prevent_initial_call=True)
-def login_act(n, u, p):
-    res = execute_query("SELECT id, password_hash, role FROM users WHERE username=%s", (u,), fetch=True)
-    if res and check_password_hash(res[0]['password_hash'], p):
-        login_user(User(res[0]['id'], u, res[0]['role']))
-        return "/", ""
-    return dash.no_update, "Invalid Username"
 
-@app.callback([Output("quote-state", "data"), Output("cart", "children"), Output("subtot-display", "children"), Output("tax-display", "children"), Output("tot", "children"), Output("q-acts", "children"), Output("dl-pdf", "data"), Output("q-toast", "children")], [Input("btn-add", "n_clicks"), Input({"type":"a-btn", "index":ALL}, "n_clicks")], [State("cat-sel", "value"), State("quote-state", "data"), State("c-sel", "value")])
-def quote_logic(n_add, n_act, cat_id, state, cust_id):
-    ctx_id = ctx.triggered_id
-    pdf, toast = dash.no_update, None
-    state['customer_id'] = cust_id
-    if ctx_id == "btn-add" and cat_id:
-        item = execute_query("SELECT * FROM catalog WHERE id=%s", (cat_id,), fetch=True)[0]
-        state['items'].append({"name":item['name'], "qty":1, "price":item['price']})
-    
-    sub = sum(i['qty']*i['price'] for i in state['items'])
-    tax = sub * 0.0825
-    total = sub + tax
-    state['total'] = total
-    
-    if isinstance(ctx_id, dict) and ctx_id['type'] == "a-btn":
-        act = ctx_id['index']
-        vals = (state['customer_id'], state['status'], date.today().strftime("%Y-%m-%d"), json.dumps(state['items']), sub, tax, 0, 0, total, "")
-        if act == "save":
-            if state['id'] == "Q-NEW":
-                state['id'] = f"Q-{random.randint(1000,9999)}"
-                execute_query("INSERT INTO quotes VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (state['id'],)+vals)
-            else:
-                execute_query("UPDATE quotes SET customer_id=%s, status=%s, created_at=%s, items_json=%s, subtotal=%s, tax=%s, discount=%s, fee=%s, total=%s, notes=%s WHERE id=%s", vals+(state['id'],))
-            toast = dbc.Toast("Quote Saved.", header="Success", icon="success", duration=2000, style={"position":"fixed", "top":20, "right":20})
-        elif act == "approve":
-            execute_query("UPDATE quotes SET status='Approved' WHERE id=%s", (state['id'],))
-            execute_query("INSERT INTO jobs VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)", (f"J-{random.randint(1000,9999)}", state['id'], state['customer_id'], "Unscheduled", None, None, json.dumps(state['items']), "", total))
-            state['status'] = "Approved"
-            toast = dbc.Toast("Job Created.", header="Approved", icon="success", duration=3000, style={"position":"fixed", "top":20, "right":20})
-        elif act == "pdf":
-            pdf = dcc.send_bytes(create_pdf(state), f"Quote_{state['id']}.pdf")
+def catalog_to_dict(i: CatalogItem) -> Dict[str, Any]:
+    return {"id": i.id, "name": i.name, "category": i.category, "base_cost": i.base_cost, "price": i.price}
 
-    cart = [dbc.Row([dbc.Col([html.Div(i['name'], className="fw-bold"), html.Small(f"${i['price']}", className="text-muted")], width=8), dbc.Col(html.Div(f"x{i['qty']}"), width=2), dbc.Col(html.Div(f"${i['price']*i['qty']:.0f}", className="text-end"), width=2)], className="mb-2 pb-2 border-bottom") for i in state['items']]
-    btns = [dbc.Button("Save Draft", id={"type":"a-btn", "index":"save"}, color="light", className="border me-2"), dbc.Button("PDF", id={"type":"a-btn", "index":"pdf"}, color="light", className="border")]
-    if state['status'] == "Draft": btns.append(dbc.Button("Approve", id={"type":"a-btn", "index":"approve"}, color="success", className="ms-2"))
-    return state, cart, f"${sub:,.2f}", f"${tax:,.2f}", f"${total:,.2f}", btns, pdf, toast
 
-@app.callback([Output("d-modal", "is_open"), Output("d-jid", "value"), Output("url", "pathname", allow_duplicate=True)], [Input("u-table", "selected_rows"), Input("btn-d-ok", "n_clicks")], [State("u-table", "data"), State("d-jid", "value"), State("d-tech", "value"), State("d-date", "date")], prevent_initial_call=True)
-def dispatch_logic(sel, ok, data, jid, tech, dt):
-    if ctx.triggered_id == "u-table" and sel: return True, data[sel[0]]['id'], dash.no_update
-    if ctx.triggered_id == "btn-d-ok":
-        execute_query("UPDATE jobs SET status='Scheduled', tech=%s, scheduled_date=%s WHERE id=%s", (tech, dt, jid))
-        return False, "", "/dispatch"
-    return False, "", dash.no_update
+def quote_to_list_row(q: Quote) -> Dict[str, Any]:
+    return {
+        "id": q.id,
+        "customer_id": q.customer_id,
+        "customer_name": q.customer.name if q.customer else "",
+        "total": float(q.total or 0.0),
+        "status": q.status,
+        "created_at": q.created_at.isoformat() if q.created_at else None,
+    }
 
-@app.callback([Output("j-cart", "children"), Output("j-total", "children"), Output("j-state", "data"), Output("j-modal", "is_open")], [Input("btn-j-add-modal", "n_clicks"), Input("btn-j-add-confirm", "n_clicks"), Input("btn-j-comp", "n_clicks")], [State("j-add-n", "value"), State("j-add-p", "value"), State("j-state", "data")], prevent_initial_call=True)
-def job_update(n_mod, n_add, n_comp, desc, price, state):
-    if ctx.triggered_id == "btn-j-add-modal": return dash.no_update, dash.no_update, dash.no_update, True
-    if ctx.triggered_id == "btn-j-add-confirm" and desc:
-        state['items'].append({"name": desc, "qty": 1, "price": float(price or 0)})
-    if ctx.triggered_id == "btn-j-comp":
-        tot = sum(i['qty']*i['price'] for i in state['items'])
-        execute_query("UPDATE jobs SET status='Completed', items_json=%s, total=%s WHERE id=%s", (json.dumps(state['items']), tot, state['id']))
-    
-    tot = sum(i['qty']*i['price'] for i in state['items'])
-    cart = [dbc.Row([dbc.Col(i['name'], width=8), dbc.Col(f"${i['price']}", className="text-end fw-bold", width=4)], className="mb-2 border-bottom pb-2") for i in state['items']]
-    return cart, f"Total: ${tot:,.2f}", state, False
 
-@app.callback(Output("url", "pathname", allow_duplicate=True), Input("quotes-table", "selected_rows"), State("quotes-table", "data"), prevent_initial_call=True)
-def nav_q(sel, data): return f"/builder/{data[sel[0]]['id']}"
+def sc_to_row(sc: ServiceCall) -> Dict[str, Any]:
+    return {
+        "id": sc.id,
+        "customer_id": sc.customer_id,
+        "quote_id": sc.quote_id,
+        "customer_name": sc.customer.name if sc.customer else "",
+        "address": sc.address or (sc.customer.address if sc.customer else ""),
+        "status": sc.status,
+        "tech": sc.tech_username or "",
+        "scheduled_date": iso_date(sc.scheduled_start),
+        "scheduled_time": iso_time(sc.scheduled_start),
+        "items_json": sc.items_json or "[]",
+        "notes": sc.notes or "",
+        "total": float(sc.total or 0.0),
+        "title": sc.title or "Service Call",
+    }
 
-if __name__ == "__main__":
-    app.run_server(debug=True, port=8050)
+
+def ensure_service_call_for_approved_quote(db, q: Quote) -> None:
+    if q.status != "Approved":
+        return
+    existing = db.execute(select(ServiceCall).where(ServiceCall.quote_id == q.id)).scalar_one_or_none()
+    if existing:
+        # Keep in sync (POC)
+        existing.total = float(q.total or 0.0)
+        existing.items_json = q.items_json or "[]"
+        if existing.status == "New":
+            existing.status = "Approved"
+        existing.address = existing.address or (q.customer.address if q.customer else "")
+        return
+
+    sc = ServiceCall(
+        id=f"J-{q.id[-8:]}",
+        customer_id=q.customer_id,
+        quote_id=q.id,
+        status="Approved",
+        title=f"Service Call (from Quote)",
+        address=q.customer.address if q.customer else "",
+        total=float(q.total or 0.0),
+        items_json=q.items_json or "[]",
+        notes=q.notes or "",
+    )
+    db.add(sc)
+
+
+# =========================================================
+# API Endpoints (aligned to your SPA)
+# =========================================================
+
+@app.post("/api/login")
+def api_login(payload: LoginIn):
+    with SessionLocal() as db:
+        u = db.get(User, payload.username)
+        if not u or u.password != payload.password:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        return {"user": {"username": u.username, "role": u.role, "full_name": u.full_name}}
+
+
+@app.get("/api/init-data")
+def api_init_data():
+    with SessionLocal() as db:
+        customers = db.execute(select(Customer).order_by(Customer.created_at.desc())).scalars().all()
+        catalog = db.execute(select(CatalogItem).order_by(CatalogItem.name.asc())).scalars().all()
+        return {"customers": [customer_to_dict(c) for c in customers], "catalog": [catalog_to_dict(i) for i in catalog]}
+
+
+# -------------------- Customers / Accounts --------------------
+
+@app.get("/api/customers")
+def api_customers():
+    with SessionLocal() as db:
+        customers = db.execute(select(Customer).order_by(Customer.name.asc())).scalars().all()
+        return [customer_to_dict(c) for c in customers]
+
+
+@app.post("/api/customers")
+def api_create_customer(payload: CustomerIn):
+    with SessionLocal() as db:
+        cid = payload.id or f"C-{int(datetime.utcnow().timestamp())}"
+        if db.get(Customer, cid):
+            raise HTTPException(status_code=400, detail="Customer ID already exists")
+        c = Customer(
+            id=cid,
+            name=payload.name.strip(),
+            email=payload.email.strip(),
+            phone=payload.phone.strip(),
+            address=payload.address.strip(),
+            city=payload.city.strip(),
+        )
+        db.add(c)
+        db.commit()
+        return {"ok": True, "id": cid}
+
+
+@app.put("/api/customers/{customer_id}")
+def api_update_customer(customer_id: str, payload: CustomerIn):
+    with SessionLocal() as db:
+        c = db.get(Customer, customer_id)
+        if not c:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        c.name = payload.name.strip()
+        c.email = payload.email.strip()
+        c.phone = payload.phone.strip()
+        c.address = payload.address.strip()
+        c.city = payload.city.strip()
+        db.commit()
+        return {"ok": True}
+
+
+@app.get("/api/customers/{customer_id}/summary")
+def api_customer_summary(customer_id: str):
+    with SessionLocal() as db:
+        c = db.get(Customer, customer_id)
+        if not c:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        quotes = db.execute(select(Quote).where(Quote.customer_id == customer_id).order_by(Quote.created_at.desc())).scalars().all()
+        calls = db.execute(select(ServiceCall).where(ServiceCall.customer_id == customer_id).order_by(ServiceCall.created_at.desc())).scalars().all()
+
+        return {
+            "customer": customer_to_dict(c),
+            "quotes": [quote_to_list_row(q) for q in quotes],
+            "service_calls": [sc_to_row(sc) for sc in calls],
+        }
+
+
+# -------------------- Quotes --------------------
+
+@app.get("/api/quotes")
+def api_quotes():
+    with SessionLocal() as db:
+        quotes = db.execute(select(Quote).order_by(Quote.created_at.desc())).scalars().all()
+        return [quote_to_list_row(q) for q in quotes]
+
+
+@app.get("/api/quotes/{quote_id}")
+def api_quote_detail(quote_id: str):
+    with SessionLocal() as db:
+        q = db.get(Quote, quote_id)
+        if not q:
+            raise HTTPException(status_code=404, detail="Quote not found")
+        try:
+            items = json.loads(q.items_json or "[]")
+        except Exception:
+            items = []
+        return {
+            "id": q.id,
+            "customer_id": q.customer_id,
+            "customer_name": q.customer.name if q.customer else "",
+            "status": q.status,
+            "total": float(q.total or 0.0),
+            "notes": q.notes or "",
+            "items": items,
+            "created_at": q.created_at.isoformat() if q.created_at else None,
+            "updated_at": q.updated_at.isoformat() if q.updated_at else None,
+        }
+
+
+@app.post("/api/quotes")
+def api_create_quote(payload: QuoteIn):
+    with SessionLocal() as db:
+        c = db.get(Customer, payload.customer_id)
+        if not c:
+            raise HTTPException(status_code=400, detail="Invalid customer_id")
+
+        qid = f"Q-{int(datetime.utcnow().timestamp())}"
+        status = payload.status or "Draft"
+        q = Quote(
+            id=qid,
+            customer_id=payload.customer_id,
+            status=status,
+            total=float(payload.total or 0.0),
+            notes=payload.notes or "",
+            items_json=json.dumps([i.model_dump() for i in payload.items]),
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        db.add(q)
+        db.commit()
+
+        # If created as Approved, ensure a job exists
+        with SessionLocal() as db2:
+            q2 = db2.get(Quote, qid)
+            if q2:
+                ensure_service_call_for_approved_quote(db2, q2)
+                db2.commit()
+
+        return {"ok": True, "id": qid}
+
+
+@app.put("/api/quotes/{quote_id}")
+def api_update_quote(quote_id: str, payload: QuoteUpdateIn):
+    with SessionLocal() as db:
+        q = db.get(Quote, quote_id)
+        if not q:
+            raise HTTPException(status_code=404, detail="Quote not found")
+        q.items_json = json.dumps([i.model_dump() for i in payload.items])
+        q.total = float(payload.total or 0.0)
+        q.notes = payload.notes or ""
+        if payload.status:
+            q.status = payload.status
+        q.updated_at = utcnow()
+
+        ensure_service_call_for_approved_quote(db, q)
+        db.commit()
+        return {"ok": True}
+
+
+@app.post("/api/quotes/{quote_id}/status")
+def api_set_quote_status(quote_id: str, payload: QuoteStatusIn):
+    with SessionLocal() as db:
+        q = db.get(Quote, quote_id)
+        if not q:
+            raise HTTPException(status_code=404, detail="Quote not found")
+        q.status = payload.status
+        q.updated_at = utcnow()
+        ensure_service_call_for_approved_quote(db, q)
+        db.commit()
+        return {"ok": True}
+
+
+# -------------------- Service Calls / Dispatch / Jobs --------------------
+
+@app.post("/api/service-calls")
+def api_create_service_call(payload: ServiceCallIn):
+    with SessionLocal() as db:
+        c = db.get(Customer, payload.customer_id)
+        if not c:
+            raise HTTPException(status_code=400, detail="Invalid customer_id")
+        scid = f"J-{int(datetime.utcnow().timestamp())}"
+        sc = ServiceCall(
+            id=scid,
+            customer_id=payload.customer_id,
+            quote_id=payload.quote_id,
+            status=payload.status or "New",
+            title=payload.title or "Service Call",
+            address=(payload.address or "").strip() or (c.address or ""),
+            notes=payload.notes or "",
+            items_json="[]",
+            total=0.0,
+        )
+        db.add(sc)
+        db.commit()
+        return {"ok": True, "id": scid}
+
+
+@app.get("/api/dispatch-data")
+def api_dispatch_data():
+    with SessionLocal() as db:
+        techs = db.execute(select(User).where(User.role == "tech").order_by(User.full_name.asc())).scalars().all()
+
+        unscheduled = db.execute(
+            select(ServiceCall).where(ServiceCall.scheduled_start.is_(None)).where(ServiceCall.status.in_(["New", "Approved"])).order_by(ServiceCall.created_at.desc())
+        ).scalars().all()
+
+        scheduled = db.execute(
+            select(ServiceCall).where(ServiceCall.scheduled_start.is_not(None)).where(ServiceCall.status.in_(["Scheduled", "In Progress", "Complete"])).order_by(ServiceCall.scheduled_start.asc())
+        ).scalars().all()
+
+        return {
+            "techs": [{"username": t.username, "full_name": t.full_name} for t in techs],
+            "unscheduled": [sc_to_row(sc) for sc in unscheduled],
+            "scheduled": [sc_to_row(sc) for sc in scheduled],
+        }
+
+
+@app.post("/api/dispatch/assign")
+def api_dispatch_assign(payload: AssignIn):
+    with SessionLocal() as db:
+        # Existing SPA passes the job id as "quote_id" (kept for compatibility)
+        sc = db.get(ServiceCall, payload.quote_id)
+        if not sc:
+            raise HTTPException(status_code=404, detail="Service call not found")
+
+        tech = db.get(User, payload.tech_username)
+        if not tech or tech.role != "tech":
+            raise HTTPException(status_code=400, detail="Invalid tech")
+
+        try:
+            y, m, d = [int(x) for x in payload.scheduled_date.split("-")]
+            hh, mm = [int(x) for x in (payload.start_time or "09:00").split(":")]
+            start = datetime(y, m, d, hh, mm)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid date/time")
+
+        dur = int(payload.duration_minutes or 120)
+        end = start + timedelta(minutes=dur)
+
+        sc.tech_username = tech.username
+        sc.scheduled_start = start
+        sc.scheduled_end = end
+        if sc.status in ("New", "Approved"):
+            sc.status = "Scheduled"
+        db.commit()
+        return {"ok": True}
+
+
+@app.get("/api/my-jobs")
+def api_my_jobs(username: str):
+    with SessionLocal() as db:
+        jobs = db.execute(
+            select(ServiceCall).where(ServiceCall.tech_username == username).where(ServiceCall.status.in_(["Scheduled", "In Progress"])).order_by(ServiceCall.scheduled_start.asc())
+        ).scalars().all()
+        return [sc_to_row(j) for j in jobs]
+
+
+@app.post("/api/jobs/complete")
+def api_jobs_complete(payload: CompleteJobIn):
+    with SessionLocal() as db:
+        sc = db.get(ServiceCall, payload.job_id)
+        if not sc:
+            raise HTTPException(status_code=404, detail="Job not found")
+        sc.items_json = json.dumps([i.model_dump() for i in payload.final_items])
+        sc.total = float(payload.total or 0.0)
+        sc.notes = payload.notes or ""
+        sc.status = "Complete"
+        sc.completed_at = utcnow()
+        db.commit()
+        return {"ok": True}
+
+
+# -------------------- Dashboard --------------------
+
+@app.get("/api/dashboard")
+def api_dashboard():
+    today = datetime.utcnow().date()
+
+    with SessionLocal() as db:
+        # Revenue: completed jobs
+        revenue = db.execute(select(func.coalesce(func.sum(ServiceCall.total), 0.0)).where(ServiceCall.status == "Complete")).scalar_one() or 0.0
+
+        # Pending quotes: Draft or Sent
+        pending = db.execute(select(func.count(Quote.id)).where(Quote.status.in_(["Draft", "Sent"]))).scalar_one() or 0
+
+        # Active jobs: scheduled/in progress
+        active_jobs = db.execute(select(func.count(ServiceCall.id)).where(ServiceCall.status.in_(["Scheduled", "In Progress"]))).scalar_one() or 0
+
+        # Avg ticket: completed jobs avg, fallback to 0
+        avg_ticket = db.execute(select(func.coalesce(func.avg(ServiceCall.total), 0.0)).where(ServiceCall.status == "Complete")).scalar_one() or 0.0
+
+        # Recent activity: latest quotes (mix w/ jobs)
+        recent_q = db.execute(select(Quote).order_by(Quote.created_at.desc()).limit(8)).scalars().all()
+        recent = [
+            {
+                "id": q.id,
+                "customer_name": q.customer.name if q.customer else "",
+                "status": f"Quote: {q.status}",
+                "total": float(q.total or 0.0),
+            }
+            for q in recent_q
+        ]
+
+        # Today's schedule
+        start_dt = datetime(today.year, today.month, today.day, 0, 0)
+        end_dt = start_dt + timedelta(days=1)
+        todays = db.execute(
+            select(ServiceCall).where(ServiceCall.scheduled_start.is_not(None)).where(ServiceCall.scheduled_start >= start_dt).where(ServiceCall.scheduled_start < end_dt).order_by(ServiceCall.scheduled_start.asc())
+        ).scalars().all()
+
+        schedule = [
+            {
+                "id": j.id,
+                "customer_name": j.customer.name if j.customer else "",
+                "scheduled_date": f"{iso_date(j.scheduled_start)} {iso_time(j.scheduled_start)}",
+                "tech": j.tech_username or "",
+            }
+            for j in todays
+        ]
+
+        return {
+            "revenue": float(revenue),
+            "pending": int(pending),
+            "active_jobs": int(active_jobs),
+            "avg_ticket": float(avg_ticket),
+            "recent": recent,
+            "schedule": schedule,
+        }
