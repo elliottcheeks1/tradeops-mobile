@@ -23,6 +23,20 @@
 <body class="bg-surface text-slate-800 h-screen overflow-hidden">
 
 <div id="app" class="h-full flex flex-col" v-cloak>
+  <!-- TOASTS -->
+  <div class="fixed top-3 right-3 z-[60] space-y-2 w-[92vw] max-w-sm md:w-80 toast-container">
+    <div v-for="n in notifications" :key="n.id"
+         class="rounded-xl shadow-xl border p-3 bg-white flex items-start gap-3">
+      <div class="mt-0.5" :class="n.type==='success'?'text-green-600':(n.type==='error'?'text-red-600':'text-blue-600')">
+        <i class="fa-solid" :class="n.type==='success'?'fa-circle-check':(n.type==='error'?'fa-triangle-exclamation':'fa-circle-info')"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-bold text-slate-800">{{ n.title }}</div>
+        <div class="text-xs text-slate-500 mt-0.5 break-words">{{ n.message }}</div>
+      </div>
+      <button @click="dismissToast(n.id)" class="text-slate-400 hover:text-slate-700"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+  </div>
 
   <!-- LOGIN (unchanged UI) -->
   <div v-if="!user" class="fixed inset-0 bg-slate-100 z-50 flex items-center justify-center p-4">
@@ -71,6 +85,10 @@
             <i class="fa-solid fa-calendar-days w-5 text-center"></i> Dispatch Board
           </a>
 
+          <a href="#" @click="setView('workorders')" :class="navClass('workorders')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
+            <i class="fa-solid fa-clipboard-list w-5 text-center"></i> Work Orders
+          </a>
+
           <!-- NEW: Service Calls list (does not remove Dispatch; complements it) -->
           <a href="#" @click="setView('service-calls')" :class="navClass('service-calls')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
             <i class="fa-solid fa-wrench w-5 text-center"></i> Service Calls
@@ -93,6 +111,10 @@
           <div class="pt-4 pb-2 text-xs font-semibold text-slate-400 uppercase">Field Work</div>
           <a href="#" @click="setView('my-schedule')" :class="navClass('my-schedule')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
             <i class="fa-solid fa-calendar-check w-5 text-center"></i> My Schedule
+          </a>
+
+          <a href="#" @click="setView('workorders')" :class="navClass('workorders')" class="flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg">
+            <i class="fa-solid fa-clipboard-list w-5 text-center"></i> Work Orders
           </a>
         </template>
       </nav>
@@ -293,7 +315,78 @@
           </div>
         </div>
 
-        <!-- TECH: MY SCHEDULE (kept) -->
+        
+        <!-- NEW: WORK ORDERS (by job) -->
+        <div v-if="view === 'workorders'" class="max-w-7xl mx-auto space-y-4">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-bold text-slate-800">Work Orders</h2>
+              <p class="text-sm text-slate-500">Browse jobs, open work orders, and create return visits.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <select v-model="workordersFilter" @change="refreshWorkorders()" class="border rounded-lg p-2 text-sm font-bold">
+                <option value="">All Statuses</option>
+                <option value="New">New</option>
+                <option value="Approved">Approved</option>
+                <option value="Scheduled">Scheduled</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Complete">Complete</option>
+              </select>
+              <button @click="refreshWorkorders()" class="bg-white border border-slate-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-slate-50">
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm text-left text-slate-600">
+                <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                  <tr>
+                    <th class="px-4 md:px-6 py-3">Job</th>
+                    <th class="px-4 md:px-6 py-3">Customer</th>
+                    <th class="px-4 md:px-6 py-3">Status</th>
+                    <th class="px-4 md:px-6 py-3">Scheduled</th>
+                    <th class="px-4 md:px-6 py-3">Tech</th>
+                    <th class="px-4 md:px-6 py-3 text-right">Total</th>
+                    <th class="px-4 md:px-6 py-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="j in workorders" :key="j.id" class="border-b border-slate-50">
+                    <td class="px-4 md:px-6 py-4 font-bold">
+                      {{ j.id }}
+                      <div v-if="j.parent_id" class="text-xs text-slate-400 font-normal">Return visit for {{ j.parent_id }}</div>
+                    </td>
+                    <td class="px-4 md:px-6 py-4 font-bold">
+                      {{ j.customer_name }}
+                      <div class="text-xs text-slate-400 font-normal truncate max-w-[18rem]">{{ j.address }}</div>
+                    </td>
+                    <td class="px-4 md:px-6 py-4">
+                      <span class="text-xs font-bold px-2 py-1 rounded-full bg-slate-100">{{ j.status }}</span>
+                    </td>
+                    <td class="px-4 md:px-6 py-4">{{ j.scheduled_date ? (j.scheduled_date + ' ' + j.scheduled_time) : '—' }}</td>
+                    <td class="px-4 md:px-6 py-4">{{ j.tech || '—' }}</td>
+                    <td class="px-4 md:px-6 py-4 text-right font-bold">${{ (j.total||0).toFixed(0) }}</td>
+                    <td class="px-4 md:px-6 py-4 text-right whitespace-nowrap">
+                      <button @click="openJobDetails(j)" class="text-primary text-xs font-bold hover:underline">Open</button>
+                      <template v-if="user.role==='admin' && !j.scheduled_date && (j.status==='New' || j.status==='Approved')">
+                        <span class="mx-2 text-slate-200">|</span>
+                        <button @click="openAssignModal(j)" class="text-xs font-bold text-slate-700 hover:underline">Schedule</button>
+                      </template>
+                    </td>
+                  </tr>
+                  <tr v-if="!workorders.length">
+                    <td colspan="7" class="px-6 py-10 text-center text-slate-400">No work orders.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+
+<!-- TECH: MY SCHEDULE (kept) -->
         <div v-if="view === 'my-schedule'" class="max-w-2xl mx-auto space-y-4">
           <div v-for="job in myJobs" :key="job.id" class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <div class="flex justify-between items-start mb-4">
@@ -338,6 +431,7 @@
                 <div class="min-w-0">
                   <div class="font-bold text-sm truncate">{{ item.name }}</div>
                   <div class="text-xs text-slate-500">${{ Number(item.price).toFixed(2) }}</div>
+                  <input v-model="item.note" placeholder="Line Note (optional)" class="mt-1 w-full border border-slate-200 rounded px-2 py-1 text-xs bg-white" />
                 </div>
                 <div class="flex items-center gap-3">
                   <div class="flex items-center border rounded-lg overflow-hidden bg-white">
@@ -368,9 +462,17 @@
                 <div class="text-sm text-slate-500">Total Invoice</div>
                 <div class="text-2xl font-bold text-slate-800">${{ activeJobTotal.toFixed(2) }}</div>
               </div>
-              <button @click="completeJob" class="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-lg font-bold shadow-lg shadow-green-500/30">
-                Complete Job
-              </button>
+              <div class="flex flex-col md:flex-row gap-2 md:items-center md:justify-end">
+                <button @click="saveJobProgress" class="bg-white border border-slate-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50">
+                  Save Progress
+                </button>
+                <button @click="openFollowupModal" class="bg-white border border-slate-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50">
+                  + Create Return Visit
+                </button>
+                <button @click="openSignatureModal" class="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-lg font-bold shadow-lg shadow-green-500/30">
+                  Complete Job
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -454,6 +556,7 @@
                 <div class="min-w-0">
                   <div class="font-bold text-sm truncate">{{ item.name }}</div>
                   <div class="text-xs text-slate-500">${{ Number(item.price).toFixed(2) }}</div>
+                  <input v-model="item.note" placeholder="Line Note (optional)" class="mt-1 w-full border border-slate-200 rounded px-2 py-1 text-xs bg-white" />
                 </div>
 
                 <div class="flex items-center gap-3">
@@ -466,10 +569,14 @@
                 </div>
               </div>
 
-              <div class="flex gap-2 mt-4">
+              <div class="flex flex-col md:flex-row gap-2 mt-4">
                 <select v-model="quoteSelectedPart" class="flex-1 border p-2 rounded text-sm">
                   <option value="" disabled>Add Item...</option>
                   <option v-for="p in catalog" :key="p.id" :value="p">{{ p.name }} - ${{ p.price }}</option>
+                </select>
+                <select v-model="quoteSelectedLabor" class="flex-1 border p-2 rounded text-sm">
+                  <option value="" disabled>Add Labor...</option>
+                  <option v-for="p in laborCatalog" :key="p.id" :value="p">{{ p.name }} - ${{ p.price }}</option>
                 </select>
                 <button @click="addQuoteItemToActive()" class="bg-secondary text-white px-4 rounded text-sm font-bold">Add</button>
               </div>
@@ -617,10 +724,14 @@
                 <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.name }}</option>
               </select>
 
-              <div class="flex gap-2">
+              <div class="flex flex-col md:flex-row gap-2">
                 <select v-model="selectedPart" class="flex-1 border p-2 rounded text-sm">
                   <option value="" disabled>Select Item...</option>
                   <option v-for="p in catalog" :key="p.id" :value="p">{{ p.name }} - ${{ p.price }}</option>
+                </select>
+                <select v-model="selectedLabor" class="flex-1 border p-2 rounded text-sm">
+                  <option value="" disabled>Add Labor...</option>
+                  <option v-for="p in laborCatalog" :key="p.id" :value="p">{{ p.name }} - ${{ p.price }}</option>
                 </select>
                 <button @click="addItem" class="bg-secondary text-white px-4 rounded text-sm font-bold">Add</button>
               </div>
@@ -744,6 +855,59 @@
     </div>
   </div>
 
+  <!-- FOLLOW-UP WORK ORDER MODAL -->
+  <div v-if="showFollowupModal" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+      <h3 class="text-lg font-bold mb-2">Create Return Visit</h3>
+      <p class="text-sm text-slate-500 mb-4">Create a new work order for this customer if you need to come back.</p>
+
+      <div class="mb-3">
+        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Reason / Notes</label>
+        <textarea v-model="followupForm.notes" class="w-full border rounded p-2 text-sm h-24" placeholder="What needs to be done on the return visit?"></textarea>
+      </div>
+
+      <div class="mb-4 flex items-center gap-2">
+        <input id="copyItems" type="checkbox" v-model="followupForm.copy_items" class="w-4 h-4">
+        <label for="copyItems" class="text-sm text-slate-600">Copy current line items to the new work order</label>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button @click="showFollowupModal=false" class="px-4 py-2 bg-slate-100 rounded text-sm">Cancel</button>
+        <button @click="createFollowupWorkorder" class="px-4 py-2 bg-primary text-white rounded text-sm">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SIGNATURE MODAL -->
+  <div v-if="showSignatureModal" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+      <h3 class="text-lg font-bold mb-2">Customer Sign-Off</h3>
+      <p class="text-sm text-slate-500 mb-4">Have the customer sign before completing the work order.</p>
+
+      <div class="mb-3">
+        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Customer Name</label>
+        <input v-model="signatureForm.signer_name" class="w-full border rounded p-2 text-sm" placeholder="Customer name">
+      </div>
+
+      <div class="mb-3">
+        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Signature</label>
+        <div class="border rounded-lg overflow-hidden bg-white">
+          <canvas id="sigCanvas" class="w-full h-40 bg-white touch-none"></canvas>
+        </div>
+        <div class="flex gap-2 mt-2">
+          <button @click="clearSignature" class="bg-white border px-3 py-2 rounded text-xs font-bold">Clear</button>
+          <button @click="skipSignature" class="bg-white border px-3 py-2 rounded text-xs font-bold">Skip</button>
+        </div>
+        <p class="text-xs text-slate-400 mt-2">Tip: Use your finger on mobile/tablet.</p>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button @click="showSignatureModal=false" class="px-4 py-2 bg-slate-100 rounded text-sm">Cancel</button>
+        <button @click="completeJobWithSignature" class="px-4 py-2 bg-green-600 text-white rounded text-sm font-bold">Complete</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -753,6 +917,7 @@ createApp({
   data() {
     return {
       user: null,
+      notifications: [],
       loginForm: { username: '', password: '' },
       view: 'dashboard',
       mobileMenu: false,
@@ -799,14 +964,41 @@ createApp({
       serviceCallForm: { customer_id: "", title: "Service Call", address: "", notes: "" },
 
       // Cache for full service calls list
-      allServiceCalls: []
+      allServiceCalls: [],
+
+      // Work Orders (by job)
+      workorders: [],
+      workordersFilter: "",
+
+      // Labor dropdown
+      selectedLabor: "",
+      quoteSelectedLabor: "",
+
+      // Follow-up work order
+      showFollowupModal: false,
+      followupForm: { notes: "", copy_items: true },
+
+      // Customer signature
+      showSignatureModal: false,
+      signatureForm: { signer_name: "", signature_b64: "" }
+
     }
   },
   computed: {
+    laborCatalog() { return (this.catalog || []).filter(i => (i.item_type || 'Part') === 'Labor') },
     total() { return this.cart.reduce((s, i) => s + (Number(i.price) * (Number(i.qty)||1)), 0) },
     activeJobTotal() { return this.activeJobItems.reduce((s, i) => s + (Number(i.price) * (Number(i.qty)||1)), 0) }
   },
   methods: {
+    notify(title, message, type='info', ttl=3500) {
+      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      this.notifications.push({ id, title, message, type })
+      setTimeout(() => this.dismissToast(id), ttl)
+    },
+    dismissToast(id) {
+      this.notifications = (this.notifications || []).filter(n => n.id !== id)
+    },
+
     quoteTotal(items) { return (items||[]).reduce((s,i)=> s + (Number(i.price) * (Number(i.qty)||1)), 0) },
 
     incQty(arr, idx) { arr[idx].qty = (Number(arr[idx].qty)||1) + 1 },
@@ -825,7 +1017,7 @@ createApp({
         await this.initData()
         await this.refreshDashboard()
       } catch(e) {
-        alert("Login failed")
+        this.notify("Login failed", "Check username/password.", "error")
       }
     },
     logout() {
@@ -844,13 +1036,14 @@ createApp({
       if(v === 'dispatch') await this.refreshDispatch()
       if(v === 'my-schedule') await this.refreshMyJobs()
       if(v === 'service-calls') await this.refreshServiceCalls()
+      if(v === 'workorders') await this.refreshWorkorders()
     },
 
     async initData() {
       const res = await fetch('/api/init-data')
       const data = await res.json()
       this.customers = data.customers || []
-      this.catalog = data.catalog || []
+      this.catalog = (data.catalog || []).map(i => ({ ...i, item_type: i.item_type || 'Part' }))
     },
 
     async refreshDashboard() {
@@ -868,6 +1061,16 @@ createApp({
       this.dispatchData = await res.json()
       // Keep service calls list in sync
       this.allServiceCalls = [...(this.dispatchData.unscheduled||[]), ...(this.dispatchData.scheduled||[])]
+    },
+
+    async refreshWorkorders() {
+      const role = this.user?.role || 'admin'
+      const username = this.user?.username || ''
+      const status = this.workordersFilter || ''
+      const qs = new URLSearchParams({ role, username })
+      if(status) qs.set('status', status)
+      const res = await fetch(`/api/workorders?${qs.toString()}`)
+      this.workorders = await res.json()
     },
 
     async refreshServiceCalls() {
@@ -891,7 +1094,10 @@ createApp({
     openJobDetails(job) {
       this.lastListView = (this.user.role === 'tech') ? 'my-schedule' : (this.view || 'dispatch')
       this.activeJob = job
-      try { this.activeJobItems = JSON.parse(job.items_json || "[]") } catch(e) { this.activeJobItems = [] }
+      try {
+        const raw = JSON.parse(job.items_json || "[]") || []
+        this.activeJobItems = raw.map(x => ({ ...x, qty: Number(x.qty||1), item_type: x.item_type || "Part", note: x.note || "" }))
+      } catch(e) { this.activeJobItems = [] }
       this.activeJobNotes = job.notes || ""
       this.jobSelectedPart = ""
       this.view = 'job-details'
@@ -903,10 +1109,158 @@ createApp({
     },
     addJobItem() {
       if(!this.jobSelectedPart) return
-      this.activeJobItems.push({ ...this.jobSelectedPart, qty: 1 })
-      this.jobSelectedPart = ""
+      const item = this.jobSelectedPart
+      const item_type = item.item_type || (item.category === 'Labor' ? 'Labor' : 'Part')
+      this.activeJobItems.push({ ...item, item_type, note: '', qty: 1 })
+      this.jobSelectedPart = ''
     },
-    async completeJob() {
+    
+    saveJobProgress() {
+      if(!this.activeJob?.id) return
+      // Save current line items + notes (does not complete job)
+      this.persistJobUpdate("In Progress")
+    },
+    async persistJobUpdate(status="") {
+      const payload = {
+        job_id: this.activeJob.id,
+        items: this.activeJobItems,
+        notes: this.activeJobNotes || "",
+        status
+      }
+      const res = await fetch("/api/jobs/update", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      })
+      if(res.ok) {
+        this.notify("Saved", "Work order progress saved.", "success")
+        await this.refreshWorkorders().catch(()=>{})
+        await this.refreshMyJobs().catch(()=>{})
+      } else {
+        this.notify("Save failed", "Could not save work order.", "error")
+      }
+    },
+
+    openFollowupModal() {
+      this.followupForm = { notes: "", copy_items: true }
+      this.showFollowupModal = true
+    },
+    async createFollowupWorkorder() {
+      if(!this.activeJob?.id) return
+      const res = await fetch("/api/jobs/followup", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          job_id: this.activeJob.id,
+          copy_items: !!this.followupForm.copy_items,
+          notes: this.followupForm.notes || ""
+        })
+      })
+      if(res.ok) {
+        const data = await res.json()
+        this.showFollowupModal = false
+        this.notify("Return visit created", `New work order ${data.id} created.`, "success")
+        await this.refreshWorkorders().catch(()=>{})
+        await this.refreshDispatch().catch(()=>{})
+      } else {
+        this.notify("Create failed", "Could not create return visit.", "error")
+      }
+    },
+
+    openSignatureModal() {
+      this.showSignatureModal = true
+      this.signatureForm = { signer_name: "", signature_b64: "" }
+      this.$nextTick(() => this.initSignaturePad())
+    },
+    initSignaturePad() {
+      const canvas = document.getElementById("sigCanvas")
+      if(!canvas) return
+      const ctx = canvas.getContext("2d")
+      const rect = canvas.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = Math.floor(rect.width * dpr)
+      canvas.height = Math.floor(rect.height * dpr)
+      ctx.scale(dpr, dpr)
+      ctx.lineWidth = 2
+      ctx.lineCap = "round"
+      ctx.strokeStyle = "#0f172a"
+      let drawing = false
+      const pos = (e) => {
+        const r = canvas.getBoundingClientRect()
+        const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left
+        const y = (e.touches ? e.touches[0].clientY : e.clientY) - r.top
+        return {x,y}
+      }
+      const start = (e) => {
+        e.preventDefault()
+        drawing = true
+        const p = pos(e)
+        ctx.beginPath()
+        ctx.moveTo(p.x, p.y)
+      }
+      const move = (e) => {
+        if(!drawing) return
+        e.preventDefault()
+        const p = pos(e)
+        ctx.lineTo(p.x, p.y)
+        ctx.stroke()
+      }
+      const end = (e) => {
+        if(!drawing) return
+        e.preventDefault()
+        drawing = false
+      }
+      canvas.onmousedown = start
+      canvas.onmousemove = move
+      window.onmouseup = end
+      canvas.ontouchstart = start
+      canvas.ontouchmove = move
+      canvas.ontouchend = end
+    },
+    clearSignature() {
+      const canvas = document.getElementById("sigCanvas")
+      if(!canvas) return
+      const ctx = canvas.getContext("2d")
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    },
+    skipSignature() {
+      this.signatureForm = { ...this.signatureForm, signature_b64: "" }
+      this.showSignatureModal = false
+      this.completeJobWithSignature(true)
+    },
+    async completeJobWithSignature(skip=false) {
+      if(!this.activeJob?.id) return
+      let sigB64 = ""
+      if(!skip) {
+        const canvas = document.getElementById("sigCanvas")
+        if(canvas) sigB64 = canvas.toDataURL("image/png")
+      }
+      this.showSignatureModal = false
+      const payload = {
+        job_id: this.activeJob.id,
+        final_items: this.activeJobItems,
+        total: this.jobTotal,
+        notes: this.activeJobNotes || "",
+        signer_name: (this.signatureForm.signer_name || ""),
+        signature_b64: sigB64 || ""
+      }
+      const res = await fetch("/api/jobs/complete", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      })
+      if(res.ok) {
+        this.notify("Work order completed", "Job closed successfully.", "success")
+        await this.refreshMyJobs().catch(()=>{})
+        await this.refreshDispatch().catch(()=>{})
+        await this.refreshWorkorders().catch(()=>{})
+        this.setView(this.user.role === 'admin' ? 'dispatch' : 'my-schedule')
+      } else {
+        this.notify("Completion failed", "Could not complete the work order.", "error")
+      }
+    },
+
+async completeJob() {
       if(!confirm("Complete job and finalize invoice?")) return
       await fetch('/api/jobs/complete', {
         method: 'POST',
@@ -918,7 +1272,7 @@ createApp({
           notes: this.activeJobNotes
         })
       })
-      alert("Job Completed!")
+      this.notify("Work order completed", "Customer sign-off captured (if provided).", "success")
       this.activeJob = null
       this.activeJobItems = []
       this.activeJobNotes = ""
@@ -939,7 +1293,7 @@ createApp({
       this.showAssignModal = true
     },
     async confirmAssign() {
-      if(!this.assignForm.tech) return alert("Select a Tech")
+      if(!this.assignForm.tech) return this.notify("Missing tech", "Select a technician to schedule.", "error")
       await fetch('/api/dispatch/assign', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
@@ -982,9 +1336,12 @@ createApp({
 
     // -------------------- Quote Builder --------------------
     addItem() {
-      if(!this.selectedPart) return
-      this.cart.push({ ...this.selectedPart, qty: 1 })
-      this.selectedPart = ""
+      const item = this.selectedPart || this.selectedLabor
+      if(!item) return
+      const item_type = item.item_type || (item.category === 'Labor' ? 'Labor' : 'Part')
+      this.cart.push({ ...item, item_type, note: '', qty: 1 })
+      this.selectedPart = ''
+      this.selectedLabor = ''
     },
     startNewQuote(prefCustomerId=null) {
       this.cart = []
@@ -993,7 +1350,7 @@ createApp({
       this.view = 'builder'
     },
     async saveQuote(status="Draft") {
-      if(!this.selectedCustomer || !this.cart.length) return alert("Missing Info")
+      if(!this.selectedCustomer || !this.cart.length) return this.notify("Missing info", "Select a customer and add at least one line item.", "error")
       await fetch('/api/quotes', {
         method: 'POST',
         headers:{'Content-Type':'application/json'},
@@ -1007,7 +1364,7 @@ createApp({
       })
       this.cart = []
       this.selectedCustomer = ""
-      alert("Quote Saved")
+      this.notify("Quote saved", "Quote created successfully.", "success")
       await this.refreshQuotes()
       this.view = 'quotes'
     },
@@ -1016,14 +1373,17 @@ createApp({
     async openQuote(quoteId) {
       const res = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}`)
       const q = await res.json()
-      this.activeQuote = { ...q, items: (q.items||[]) }
+      this.activeQuote = { ...q, items: (q.items||[]).map(x => ({ ...x, qty: Number(x.qty||1), item_type: x.item_type || 'Part', note: x.note || '' })) }
       this.quoteSelectedPart = ""
       this.view = 'quote-details'
     },
     addQuoteItemToActive() {
-      if(!this.quoteSelectedPart) return
-      this.activeQuote.items.push({ ...this.quoteSelectedPart, qty: 1 })
-      this.quoteSelectedPart = ""
+      const item = this.quoteSelectedPart || this.quoteSelectedLabor
+      if(!item) return
+      const item_type = item.item_type || (item.category === 'Labor' ? 'Labor' : 'Part')
+      this.activeQuote.items.push({ ...item, item_type, note: '', qty: 1 })
+      this.quoteSelectedPart = ''
+      this.quoteSelectedLabor = ''
     },
     async saveActiveQuote() {
       const total = this.quoteTotal(this.activeQuote.items)
@@ -1037,7 +1397,7 @@ createApp({
           status: this.activeQuote.status
         })
       })
-      alert("Quote updated")
+      this.notify("Quote updated", "Changes saved successfully.", "success")
       await this.refreshQuotes()
       // If approved, refresh dispatch so it appears as schedulable job
       if(this.activeQuote.status === 'Approved') await this.refreshDispatch()
@@ -1061,7 +1421,7 @@ createApp({
       this.showServiceCallModal = true
     },
     async createServiceCall() {
-      if(!this.serviceCallForm.customer_id) return alert("Select a customer")
+      if(!this.serviceCallForm.customer_id) return this.notify("Missing customer", "Select a customer first.", "error")
       await fetch('/api/service-calls', {
         method: 'POST',
         headers:{'Content-Type':'application/json'},
