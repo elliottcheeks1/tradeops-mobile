@@ -88,6 +88,7 @@ class CatalogItem(Base):
     category = Column(String, default="")
     base_cost = Column(Float, default=0.0)
     price = Column(Float, default=0.0)
+    item_type = Column(String, default="Part")  # Part / Labor
 
 
 class Quote(Base):
@@ -120,6 +121,11 @@ class ServiceCall(Base):
     id = Column(String, primary_key=True)
     customer_id = Column(String, ForeignKey("customers.id"), nullable=False)
     quote_id = Column(String, ForeignKey("quotes.id"), nullable=True)
+
+    parent_id = Column(String, ForeignKey("service_calls.id"), nullable=True)
+    signature_b64 = Column(Text, default="")
+    signer_name = Column(String, default="")
+    signed_at = Column(DateTime, nullable=True)
 
     status = Column(String, default="New")  # New, Approved, Scheduled, In Progress, Complete
     title = Column(String, default="Service Call")
@@ -164,6 +170,8 @@ class QuoteItemIn(BaseModel):
     category: Optional[str] = ""
     price: float
     qty: int = 1
+    item_type: str = "Part"
+    note: str = ""
 
 
 class QuoteIn(BaseModel):
@@ -208,6 +216,8 @@ class CompleteJobIn(BaseModel):
     final_items: List[QuoteItemIn]
     total: float
     notes: str = ""
+    signer_name: str = ""
+    signature_b64: str = ""
 
 
 # =========================================================
@@ -222,6 +232,11 @@ static_path.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
 
+@app.head("/")
+def root_head():
+    return {}
+
+
 @app.get("/")
 def root():
     index = static_path / "index.html"
@@ -230,12 +245,37 @@ def root():
     return FileResponse(index)
 
 
+
+# =========================================================
+# Minimal SQLite schema migrations (POC)
+# =========================================================
+
+def _add_column_if_missing(table: str, colname: str, coldef_sql: str) -> None:
+    with engine.connect() as conn:
+        cols = [r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table});").fetchall()]
+        if colname in cols:
+            return
+        conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {coldef_sql};")
+        conn.commit()
+
+
+def ensure_schema_migrations() -> None:
+    # catalog
+    _add_column_if_missing("catalog", "item_type", "item_type VARCHAR DEFAULT 'Part'")
+
+    # service_calls follow-up + signature
+    _add_column_if_missing("service_calls", "parent_id", "parent_id VARCHAR")
+    _add_column_if_missing("service_calls", "signature_b64", "signature_b64 TEXT DEFAULT ''")
+    _add_column_if_missing("service_calls", "signer_name", "signer_name VARCHAR DEFAULT ''")
+    _add_column_if_missing("service_calls", "signed_at", "signed_at DATETIME")
+
 # =========================================================
 # DB Init / Seeding
 # =========================================================
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    ensure_schema_migrations()
     with SessionLocal() as db:
         # Seed users
         if db.execute(select(func.count(User.username))).scalar_one() == 0:
@@ -254,17 +294,26 @@ def init_db():
             ])
 
         # Seed catalog
-        if db.execute(select(func.count(CatalogItem.id))).scalar_one() == 0:
-            seed = [
-                ("I-1", "HVAC Tune-up", "Service", 20, 89),
-                ("I-2", "16 SEER AC Unit", "Install", 1800, 2800),
-                ("I-3", "Water Heater Install", "Install", 600, 1200),
-                ("I-4", "Panel Upgrade 200A", "Install", 800, 1600),
-                ("I-5", "Drain Cleaning", "Service", 10, 149),
-                ("I-6", "Smart Thermostat", "Service", 80, 249),
-                ("I-7", "EV Charger Install", "Install", 300, 950),
-            ]
-            db.add_all([CatalogItem(id=i, name=n, category=c, base_cost=float(bc), price=float(p)) for i, n, c, bc, p in seed])
+        seed = [
+            # id, name, category, base_cost, price, item_type
+            ("I-1", "HVAC Tune-up", "Service", 20, 89, "Labor"),
+            ("I-2", "16 SEER AC Unit", "Install", 1800, 2800, "Part"),
+            ("I-3", "Water Heater Install", "Install", 600, 1200, "Part"),
+            ("I-4", "Panel Upgrade 200A", "Install", 800, 1600, "Part"),
+            ("I-5", "Drain Cleaning", "Service", 10, 149, "Labor"),
+            ("I-6", "Smart Thermostat", "Service", 80, 249, "Part"),
+            ("I-7", "EV Charger Install", "Install", 300, 950, "Part"),
+            ("L-1", "Labor - Standard Hour", "Labor", 0, 125, "Labor"),
+            ("L-2", "Labor - Diagnostic Fee", "Labor", 0, 99, "Labor"),
+            ("L-3", "Labor - After Hours Hour", "Labor", 0, 175, "Labor"),
+        ]
+
+        # Insert any missing catalog items (id-based upsert)
+        existing_ids = set(db.execute(select(CatalogItem.id)).scalars().all())
+        for i, n, c, bc, p, t in seed:
+            if i in existing_ids:
+                continue
+            db.add(CatalogItem(id=i, name=n, category=c, base_cost=float(bc), price=float(p), item_type=t))
 
         db.commit()
 
@@ -290,7 +339,7 @@ def customer_to_dict(c: Customer) -> Dict[str, Any]:
 
 
 def catalog_to_dict(i: CatalogItem) -> Dict[str, Any]:
-    return {"id": i.id, "name": i.name, "category": i.category, "base_cost": i.base_cost, "price": i.price}
+    return {"id": i.id, "name": i.name, "category": i.category, "base_cost": i.base_cost, "price": i.price, "item_type": i.item_type or "Part"}
 
 
 def quote_to_list_row(q: Quote) -> Dict[str, Any]:
@@ -309,6 +358,7 @@ def sc_to_row(sc: ServiceCall) -> Dict[str, Any]:
         "id": sc.id,
         "customer_id": sc.customer_id,
         "quote_id": sc.quote_id,
+        "parent_id": sc.parent_id,
         "customer_name": sc.customer.name if sc.customer else "",
         "address": sc.address or (sc.customer.address if sc.customer else ""),
         "status": sc.status,
@@ -601,6 +651,99 @@ def api_dispatch_assign(payload: AssignIn):
         return {"ok": True}
 
 
+
+@app.get("/api/workorders")
+def api_workorders(username: str = "", role: str = "admin", status: str = ""):
+    """
+    Work Orders tab source.
+    - Admin/dispatch: see all work orders
+    - Tech: see assigned work orders
+    """
+    with SessionLocal() as db:
+        q = select(ServiceCall).order_by(ServiceCall.created_at.desc())
+        if role == "tech" and username:
+            q = q.where(ServiceCall.tech_username == username)
+        if status:
+            statuses = [s.strip() for s in status.split(",") if s.strip()]
+            if statuses:
+                q = q.where(ServiceCall.status.in_(statuses))
+        rows = db.execute(q).scalars().all()
+        return [sc_to_row(r) for r in rows]
+
+
+@app.post("/api/jobs/followup")
+def api_jobs_followup(payload: Dict[str, Any]):
+    """
+    Create a new follow-up work order (return visit) from an existing job.
+    Body: { job_id, copy_items: bool, notes: str }
+    """
+    job_id = str(payload.get("job_id", "") or "")
+    copy_items = bool(payload.get("copy_items", True))
+    notes = str(payload.get("notes", "") or "").strip()
+
+    with SessionLocal() as db:
+        sc = db.get(ServiceCall, job_id)
+        if not sc:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        new_id = f"J-{int(datetime.utcnow().timestamp())}"
+        new_items = sc.items_json if copy_items else "[]"
+        reason = f"Follow-up for {sc.id}." + (f" {notes}" if notes else "")
+
+        new_sc = ServiceCall(
+            id=new_id,
+            customer_id=sc.customer_id,
+            quote_id=None,
+            parent_id=sc.id,
+            status="New",
+            title="Return Visit",
+            address=sc.address,
+            tech_username=None,
+            scheduled_start=None,
+            scheduled_end=None,
+            total=0.0,
+            items_json=new_items,
+            notes=reason.strip(),
+        )
+        db.add(new_sc)
+        db.commit()
+        return {"ok": True, "id": new_id}
+
+
+@app.post("/api/jobs/update")
+def api_jobs_update(payload: Dict[str, Any]):
+    """
+    Save in-progress updates to a work order: line items + notes + status.
+    Body: { job_id, items: [...], notes: str, status: str }
+    """
+    job_id = str(payload.get("job_id", "") or "")
+    items = payload.get("items", []) or []
+    notes = str(payload.get("notes", "") or "")
+    status = str(payload.get("status", "") or "")
+
+    with SessionLocal() as db:
+        sc = db.get(ServiceCall, job_id)
+        if not sc:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # normalize note + item_type keys
+        norm = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            it = dict(it)
+            it.setdefault("note", "")
+            it.setdefault("item_type", it.get("item_type") or "Part")
+            it["qty"] = int(it.get("qty") or 1)
+            norm.append(it)
+
+        sc.items_json = json.dumps(norm)
+        sc.notes = notes
+        if status:
+            sc.status = status
+        db.commit()
+        return {"ok": True}
+
 @app.get("/api/my-jobs")
 def api_my_jobs(username: str):
     with SessionLocal() as db:
@@ -621,6 +764,10 @@ def api_jobs_complete(payload: CompleteJobIn):
         sc.notes = payload.notes or ""
         sc.status = "Complete"
         sc.completed_at = utcnow()
+        if payload.signer_name and payload.signature_b64:
+            sc.signer_name = payload.signer_name
+            sc.signature_b64 = payload.signature_b64
+            sc.signed_at = utcnow()
         db.commit()
         return {"ok": True}
 
